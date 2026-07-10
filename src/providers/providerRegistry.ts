@@ -8,7 +8,7 @@ export function createProviders() {
   const translation =
     selected === 'mock'
       ? new MockTranslationProvider()
-      : selected === 'gpt' || selected === 'openai'
+      : selected === 'gpt' || selected === 'openai' || selected === 'gemini'
         ? new ServerTranslationProvider()
       : new PlaceholderPaidProvider(String(selected));
 

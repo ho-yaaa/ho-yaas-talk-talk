@@ -1,7 +1,7 @@
 import type { TranslationProvider, TranslationRequest } from './interfaces';
 
 export class ServerTranslationProvider implements TranslationProvider {
-  name = 'gpt-server-proxy';
+  name = 'server-ai-proxy';
 
   constructor(
     private endpoint = import.meta.env.VITE_TRANSLATION_API_URL ??

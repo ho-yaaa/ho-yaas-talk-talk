@@ -1,5 +1,25 @@
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
+
+function loadLocalEnv() {
+  for (const file of ['.env', '.env.local']) {
+    const filePath = path.join(process.cwd(), file);
+    if (!fs.existsSync(filePath)) continue;
+    const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue;
+      const [rawKey, ...rawValue] = trimmed.split('=');
+      const key = rawKey.trim();
+      const value = rawValue.join('=').trim().replace(/^["']|["']$/g, '');
+      if (key && process.env[key] === undefined) process.env[key] = value;
+    }
+  }
+}
+
+loadLocalEnv();
 
 type Message = {
   type: 'create-session' | 'join' | 'speaker-text' | 'ping';
@@ -13,6 +33,8 @@ type Message = {
 
 const sessions = new Map<string, Set<WebSocket>>();
 const openAiModel = process.env.OPENAI_TRANSLATION_MODEL || 'gpt-4.1-mini';
+const geminiModel = process.env.GEMINI_TRANSLATION_MODEL || 'gemini-3.5-flash';
+const translationProvider = (process.env.TRANSLATION_PROVIDER || 'mock').toLowerCase();
 
 function makeCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -124,6 +146,84 @@ async function translateWithOpenAi(payload: Record<string, unknown>) {
   return data.output_text?.trim() ?? '';
 }
 
+function buildTranslationPrompt(payload: Record<string, unknown>) {
+  const text = String(payload.text ?? '').trim();
+  if (!text) throw new Error('Text is required');
+
+  const glossary = Array.isArray(payload.glossary)
+    ? payload.glossary
+        .slice(0, 30)
+        .map((item) => {
+          const term = item as { source?: string; target?: string };
+          return term.source && term.target ? `${term.source}=>${term.target}` : '';
+        })
+        .filter(Boolean)
+        .join(', ')
+    : '';
+  const recentContext = Array.isArray(payload.recentContext)
+    ? payload.recentContext.slice(-6).join('\n')
+    : '';
+
+  return [
+    `Translate immediately from ${languageName(payload.sourceLang)} to ${languageName(payload.targetLang)}.`,
+    'Return only the translated utterance. No quotes, no notes, no explanations.',
+    'Prefer natural spoken business interpretation over literal translation.',
+    'Use concise, polite, meeting-appropriate language.',
+    payload.briefing ? `Meeting context: ${String(payload.briefing).slice(0, 800)}` : '',
+    glossary ? `Glossary: ${glossary}` : '',
+    recentContext ? `Recent context:\n${recentContext}` : '',
+    `Speech: ${text}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+async function translateWithGemini(payload: Record<string, unknown>) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured. Create a key in Google AI Studio and set it in .env.');
+  }
+
+  const prompt = buildTranslationPrompt(payload);
+  const apiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+    method: 'POST',
+    headers: {
+      'x-goog-api-key': apiKey,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: geminiModel,
+      input: prompt,
+      system_instruction:
+        'You are a low-latency Korean-Japanese business meeting interpreter. Output only the translation.',
+      generation_config: {
+        temperature: 0.2,
+        max_output_tokens: 220,
+        thinking_level: 'low',
+      },
+    }),
+  });
+
+  const data = (await apiResponse.json()) as {
+    output_text?: string;
+    error?: { message?: string };
+  };
+  if (!apiResponse.ok) {
+    throw new Error(data.error?.message ?? `Gemini API error ${apiResponse.status}`);
+  }
+  return data.output_text?.trim() ?? '';
+}
+
+async function translateWithConfiguredProvider(payload: Record<string, unknown>) {
+  if (translationProvider === 'gemini') {
+    return { translatedText: await translateWithGemini(payload), provider: 'gemini', model: geminiModel };
+  }
+  if (translationProvider === 'openai' || translationProvider === 'gpt') {
+    return { translatedText: await translateWithOpenAi(payload), provider: 'openai', model: openAiModel };
+  }
+  throw new Error('Server AI proxy is running, but TRANSLATION_PROVIDER is not gemini/openai/gpt.');
+}
+
 const server = http.createServer(async (request, response) => {
   cors(response);
   if (request.method === 'OPTIONS') {
@@ -135,6 +235,9 @@ const server = http.createServer(async (request, response) => {
   if (request.url === '/health') {
     sendJson(response, 200, {
       ok: true,
+      translationProvider,
+      geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+      geminiModel,
       openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
       openAiModel,
     });
@@ -144,12 +247,11 @@ const server = http.createServer(async (request, response) => {
   if (request.url === '/api/translate' && request.method === 'POST') {
     try {
       const payload = await readJsonBody(request);
-      const translatedText = await translateWithOpenAi(payload);
-      sendJson(response, 200, { translatedText, provider: 'openai', model: openAiModel });
+      sendJson(response, 200, await translateWithConfiguredProvider(payload));
     } catch (error) {
       sendJson(response, 500, {
         error: error instanceof Error ? error.message : 'Translation failed',
-        provider: 'openai',
+        provider: translationProvider,
       });
     }
     return;

@@ -20,6 +20,9 @@ pnpm dev:all
 앱: `http://127.0.0.1:5173`  
 로컬 행사 서버: `ws://127.0.0.1:8788`
 
+브라우저에서 앱을 테스트하려면 반드시 `http://127.0.0.1:5173/`을 여세요.  
+`http://127.0.0.1:8788/api/translate`는 화면이 뜨는 사이트가 아니라 번역 요청을 받는 API 주소입니다.
+
 ## GPT API 통역 켜기
 
 기본은 무료 mock provider입니다. GPT API를 사용하려면 실제 키를 `.env`에만 넣고, 프론트엔드 코드나 Git에는 절대 커밋하지 마세요.
@@ -38,6 +41,26 @@ pnpm dev:all
 ```
 
 GPT translation은 `/api/translate` 로컬 서버 proxy를 통해서만 호출됩니다. 브라우저 번들에는 API 키가 들어가지 않습니다. OpenAI Responses API는 공식 문서의 text generation 및 Responses API 기준으로 구현했습니다.
+
+## Gemini API 통역 켜기
+
+사용량이 적은 일정에서는 Gemini API를 비용 효율적으로 쓸 수 있지만, 무료 한도/유료 과금/지역/모델 제한은 Google 정책에 따라 달라질 수 있습니다. 실제 키를 `.env`에만 넣고 Git에는 커밋하지 마세요.
+
+```env
+VITE_TRANSLATION_PROVIDER=gemini
+VITE_TRANSLATION_API_URL=http://127.0.0.1:8788/api/translate
+TRANSLATION_PROVIDER=gemini
+GEMINI_API_KEY=...
+GEMINI_TRANSLATION_MODEL=gemini-3.5-flash
+```
+
+그 다음 앱 서버와 로컬 proxy 서버를 같이 실행합니다.
+
+```bash
+pnpm dev:all
+```
+
+Gemini 호출도 브라우저에서 직접 하지 않고 `/api/translate` 로컬 서버 proxy를 거칩니다. Google 공식 Gemini API 문서의 Interactions API REST 형식과 가격 안내를 기준으로 구현했습니다.
 
 ## 테스트
 
@@ -92,12 +115,14 @@ pnpm test:e2e
 `.env.example`에는 다음 구조만 제공합니다.
 
 ```env
+VITE_TRANSLATION_PROVIDER=mock
+VITE_TRANSLATION_API_URL=http://127.0.0.1:8788/api/translate
 TRANSLATION_PROVIDER=mock
 SUMMARY_PROVIDER=rules
-REALTIME_SERVER_URL=ws://127.0.0.1:8787
+REALTIME_SERVER_URL=ws://127.0.0.1:8788
 ```
 
-`VITE_TRANSLATION_PROVIDER=gpt` 또는 `openai`를 설정하면 로컬 서버 proxy를 통해 GPT 번역 provider를 사용합니다. mock provider는 API 키 없이 UI와 흐름 검증용으로 유지됩니다.
+`VITE_TRANSLATION_PROVIDER=gpt`, `openai`, 또는 `gemini`를 설정하면 로컬 서버 proxy를 통해 실제 AI 번역 provider를 사용합니다. mock provider는 API 키 없이 UI와 흐름 검증용으로 유지됩니다.
 
 ## 수동 점검 체크리스트
 
