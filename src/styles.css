@@ -108,6 +108,100 @@ h2 {
   transform: rotate(180deg);
 }
 
+.brand-bar {
+  width: calc(100% + 48px);
+  margin: -22px -24px 28px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  min-height: 70px;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 14, 27, 0.94);
+  backdrop-filter: blur(14px);
+}
+
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: linear-gradient(135deg, #2563eb, #6366f1);
+  box-shadow: 0 12px 28px rgba(37, 99, 235, 0.22);
+}
+
+.brand-mark svg {
+  width: 20px;
+  height: 20px;
+}
+
+.brand-copy {
+  margin-left: 12px;
+}
+
+.brand-copy h1 {
+  margin: 0;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  font-size: 1rem;
+}
+
+.brand-copy h1 span {
+  padding: 2px 7px;
+  border: 1px solid rgba(59, 130, 246, 0.28);
+  border-radius: 999px;
+  color: #60a5fa;
+  background: rgba(37, 99, 235, 0.12);
+  font-size: 0.62rem;
+}
+
+.brand-copy p {
+  margin: 3px 0 0;
+  color: #748399;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.brand-user {
+  margin-left: auto;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.brand-user span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.brand-user svg {
+  width: 16px;
+  height: 16px;
+}
+
+.brand-user button {
+  width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 12px;
+  color: #8b9aaf;
+}
+
 .setup-layout {
   width: min(1500px, 100%);
   margin: 0 auto;
@@ -368,6 +462,18 @@ h2 {
 .live-console {
   display: grid;
   gap: 18px;
+  animation: liveIn 180ms ease-out;
+}
+
+@keyframes liveIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .console-toolbar label {
@@ -554,6 +660,16 @@ footer svg {
   .manual,
   .event-box {
     grid-template-columns: 1fr;
+  }
+
+  .brand-bar {
+    width: calc(100% + 28px);
+    margin: -14px -14px 20px;
+    padding: 12px 14px;
+  }
+
+  .brand-user span {
+    display: none;
   }
 
   .glossary-strip,

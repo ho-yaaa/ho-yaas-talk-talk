@@ -8,6 +8,8 @@
 
 외부 AI 번역이나 요약을 연결하는 순간 비용이 발생할 수 있습니다. 실제 연결 전에는 공급자의 최신 공식 문서, 요금, 개인정보 전송 범위를 확인하고, API 키는 프론트엔드 번들에 넣지 말고 서버/서버리스 환경변수로만 주입해야 합니다.
 
+ChatGPT Plus 구독은 ChatGPT 앱 사용권이며 OpenAI API 사용량 과금과 별도입니다. GPT API 통역을 켜려면 OpenAI API 키와 API billing이 필요할 수 있습니다.
+
 ## 실행
 
 ```bash
@@ -17,6 +19,25 @@ pnpm dev:all
 
 앱: `http://127.0.0.1:5173`  
 로컬 행사 서버: `ws://127.0.0.1:8788`
+
+## GPT API 통역 켜기
+
+기본은 무료 mock provider입니다. GPT API를 사용하려면 실제 키를 `.env`에만 넣고, 프론트엔드 코드나 Git에는 절대 커밋하지 마세요.
+
+```env
+VITE_TRANSLATION_PROVIDER=gpt
+VITE_TRANSLATION_API_URL=http://127.0.0.1:8788/api/translate
+OPENAI_API_KEY=sk-...
+OPENAI_TRANSLATION_MODEL=gpt-4.1-mini
+```
+
+그 다음 앱 서버와 로컬 proxy 서버를 같이 실행합니다.
+
+```bash
+pnpm dev:all
+```
+
+GPT translation은 `/api/translate` 로컬 서버 proxy를 통해서만 호출됩니다. 브라우저 번들에는 API 키가 들어가지 않습니다. OpenAI Responses API는 공식 문서의 text generation 및 Responses API 기준으로 구현했습니다.
 
 ## 테스트
 
@@ -76,7 +97,7 @@ SUMMARY_PROVIDER=rules
 REALTIME_SERVER_URL=ws://127.0.0.1:8787
 ```
 
-`TRANSLATION_PROVIDER=openai` 또는 `gemini` 같은 실제 adapter를 추가할 때는 최신 공식 문서를 확인한 뒤 백엔드에서만 키를 읽도록 구현하세요. 현재 코드는 비용 승인 없이 외부 API를 호출하지 않도록 placeholder가 오류를 던집니다.
+`VITE_TRANSLATION_PROVIDER=gpt` 또는 `openai`를 설정하면 로컬 서버 proxy를 통해 GPT 번역 provider를 사용합니다. mock provider는 API 키 없이 UI와 흐름 검증용으로 유지됩니다.
 
 ## 수동 점검 체크리스트
 

@@ -4,8 +4,10 @@ import {
   Download,
   Ear,
   Eraser,
+  Globe,
   Languages,
   Lightbulb,
+  LogOut,
   Moon,
   Pause,
   Play,
@@ -15,6 +17,7 @@ import {
   Sparkles,
   Square,
   Tablet,
+  User,
   Users,
   Volume2,
   VolumeX,
@@ -52,6 +55,7 @@ function makeError(area: AppError['area'], code: string, message: string, raw?: 
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('earbud');
+  const [view, setView] = useState<'setup' | 'live'>('setup');
   const [meetingTitle, setMeetingTitle] = useState('Abridge 실시간 통역 세션');
   const [status, setStatus] = useState<SessionStatus>('idle');
   const [theme] = useState<'dark' | 'light'>('dark');
@@ -211,6 +215,11 @@ export default function App() {
     });
   }
 
+  function startMeetingSession() {
+    setView('live');
+    void startListening();
+  }
+
   function stopListening() {
     userStopped.current = true;
     providers.speech.stop();
@@ -347,6 +356,26 @@ export default function App() {
 
   return (
     <main className={`app setup-shell ${flipped ? 'flipped' : ''}`}>
+      <header className="brand-bar">
+        <div className="brand-mark">
+          <Globe />
+        </div>
+        <div className="brand-copy">
+          <h1>
+            ho_ya&apos;s Talk-Talk <span>PRO</span>
+          </h1>
+          <p>Bilingual meeting hub</p>
+        </div>
+        <div className="brand-user">
+          <span>
+            <User /> 게스트 사용자
+          </span>
+          <button aria-label="logout placeholder">
+            <LogOut />
+          </button>
+        </div>
+      </header>
+
       <section className="setup-layout">
         <div className="setup-main">
           <section className="setup-card">
@@ -425,10 +454,11 @@ export default function App() {
             </button>
           </section>
 
-          <button className="launch-button" onClick={startListening}>
+          <button className="launch-button" onClick={startMeetingSession}>
             <Play /> 실시간 AI 통역 미팅 개시 <Send />
           </button>
 
+          {view === 'live' && (
           <section className="live-console">
             <div className="console-toolbar">
               <span className={`status ${latency.delayed ? 'warn' : ''}`}>{statusLabel[status]}</span>
@@ -488,6 +518,7 @@ export default function App() {
               </div>
             )}
           </section>
+          )}
         </div>
 
         <aside className="setup-aside">

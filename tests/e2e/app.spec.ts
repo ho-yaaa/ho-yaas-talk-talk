@@ -11,6 +11,7 @@ test('opens first screen and switches modes', async ({ page }) => {
 
 test('translates with fallback text input and saves meeting', async ({ page }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: /실시간 AI 통역 미팅 개시/ }).click();
   await page.getByLabel('음성 합성').uncheck();
   await page.getByPlaceholder('오류 확인용 텍스트 대체 입력').fill('안녕하세요 오늘 부산 세미나 일정 확인');
   await page.locator('form.manual').getByRole('button', { name: /번역/ }).click();
@@ -30,6 +31,7 @@ test('shows microphone unsupported or permission error details without killing a
 test('creates event session and joins with local websocket demo', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /행사 모드/ }).click();
+  await page.getByRole('button', { name: /실시간 AI 통역 미팅 개시/ }).click();
   await page.getByRole('button', { name: /세션 생성/ }).click();
   await expect(page.locator('.event-box strong')).toContainText(/[A-Z0-9]{6}/, { timeout: 8000 });
 });

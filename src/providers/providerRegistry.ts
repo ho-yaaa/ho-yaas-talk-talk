@@ -1,5 +1,6 @@
 import { BrowserSpeechRecognitionProvider } from './browserSpeech';
 import { MockTranslationProvider, PlaceholderPaidProvider } from './mockTranslation';
+import { ServerTranslationProvider } from './serverTranslation';
 import { BrowserSpeechSynthesisProvider } from './speechSynthesis';
 
 export function createProviders() {
@@ -7,6 +8,8 @@ export function createProviders() {
   const translation =
     selected === 'mock'
       ? new MockTranslationProvider()
+      : selected === 'gpt' || selected === 'openai'
+        ? new ServerTranslationProvider()
       : new PlaceholderPaidProvider(String(selected));
 
   return {
