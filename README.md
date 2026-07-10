@@ -56,6 +56,16 @@ pnpm test:e2e
 - 한 기기와 한 마이크로 두 화자를 완벽히 분리할 수 없습니다. 이 앱은 자동 언어 감지와 현재 발화 언어 고정으로 보조하지만, 화자 분리나 완벽한 방향 판별을 과장하지 않습니다.
 - 이어폰 연결 여부와 출력 장치 선택은 브라우저 보안 정책 때문에 완전 자동 감지가 어렵습니다.
 
+## 자주 뜨는 오류와 해결
+
+- `SpeechRecognition` 또는 `webkitSpeechRecognition` 미지원: MDN 기준 SpeechRecognition 오류 이벤트는 일부 주요 브라우저에서 동작하지 않는 제한 기능입니다. Chrome 계열 브라우저에서 `http://127.0.0.1:5173` 또는 HTTPS로 실행하세요.
+- `not-allowed`: 마이크 권한이 거절된 상태입니다. 브라우저 주소창의 사이트 설정에서 마이크를 허용하고 새로고침하세요.
+- `service-not-allowed`: 브라우저나 OS 정책상 음성인식 서비스가 차단된 상태입니다. Chrome 최신 버전에서 다시 확인하고, 회사/학교 관리 브라우저라면 정책 제한을 확인하세요.
+- `audio-capture`: 마이크 장치를 찾지 못했습니다. macOS 시스템 설정 > 개인정보 보호 및 보안 > 마이크에서 브라우저 권한을 확인하세요.
+- `network`: 브라우저 음성인식 엔진이 네트워크 기반으로 동작하는 경우 발생할 수 있습니다. 텍스트 대체 입력은 계속 작동합니다.
+- WebSocket `disconnected`: 행사 모드 서버가 꺼진 상태입니다. `pnpm server` 또는 `pnpm dev:all`로 `http://127.0.0.1:8788/health`가 `{"ok":true}`인지 확인하세요.
+- GitHub push 실패: `gh auth status`로 로그인 상태를 확인하고, 저장소 생성/push 승인이 필요합니다. 원격 URL이 있으면 `git remote add origin <URL>` 후 `git push -u origin main`을 실행합니다.
+
 ## Provider 확장
 
 `.env.example`에는 다음 구조만 제공합니다.
