@@ -277,6 +277,7 @@ export default function App() {
   const [boardMode, setBoardMode] = useState(false);
   const [boardSwapped, setBoardSwapped] = useState(false);
   const [boardFontScale, setBoardFontScale] = useState<keyof typeof boardFontSizes>(3);
+  const [exitDialogOpen, setExitDialogOpen] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const realtime = useRef<RealtimeClient | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -637,6 +638,7 @@ export default function App() {
   }
 
   function startMeetingSession() {
+    resetLiveSession();
     meetingStart.current = Date.now();
     setElapsedSeconds(0);
     setView('live');
@@ -717,6 +719,66 @@ export default function App() {
     setParticipantCount(0);
     setBoardMode(false);
     setView('setup');
+  }
+
+  function resetLiveSession() {
+    setSourceCaption('');
+    setTranslationCaption('');
+    setManualText('');
+    setEntries([]);
+    setMarks({});
+    setIsFinalCaption(false);
+    setLastTranslationRequest('');
+  }
+
+  function setLastTranslationRequest(value: string) {
+    lastTranslationRequest.current = value;
+  }
+
+  function requestExitLivePage() {
+    stopListening();
+    setExitDialogOpen(true);
+  }
+
+  function discardAndExitLivePage() {
+    resetLiveSession();
+    setExitDialogOpen(false);
+    exitLivePage();
+  }
+
+  function saveTranscriptTxtAndExit() {
+    exportText('txt');
+    resetLiveSession();
+    setExitDialogOpen(false);
+    exitLivePage();
+  }
+
+  function renderExitDialog() {
+    if (!exitDialogOpen) return null;
+    const finalEntries = entries.filter((entry) => entry.isFinal);
+    return (
+      <div className="exit-dialog-backdrop" role="alertdialog" aria-modal="true" aria-labelledby="exit-dialog-title">
+        <section className="exit-dialog">
+          <div>
+            <span className="exit-dialog-kicker">통역 세션 종료</span>
+            <h2 id="exit-dialog-title">현재 번역 기록을 어떻게 할까요?</h2>
+            <p>
+              저장하지 않고 소멸하면 현재 화면의 원문, 번역문, 대화 로그가 모두 비워집니다.
+              저장하면 TXT 파일로 내려받은 뒤 세션을 종료합니다.
+            </p>
+            <small>저장 대상 문장: {finalEntries.length}개</small>
+          </div>
+          <div className="exit-dialog-actions">
+            <button className="discard-button" onClick={discardAndExitLivePage}>
+              <Trash2 /> 소멸
+            </button>
+            <button className="save-txt-button" onClick={saveTranscriptTxtAndExit}>
+              <Download /> 저장
+            </button>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   function enterBoardMode() {
@@ -1212,12 +1274,14 @@ export default function App() {
             </div>
 
             <div className="board-controls" aria-label="전체화면 통역 설정">
-              <button
-                className={autoDetect ? 'active' : ''}
-                onClick={useAutoLanguageDetection}
-              >
-                <Globe /> 자동 언어 감지
-              </button>
+              {mode !== 'auto' && (
+                <button
+                  className={autoDetect ? 'active' : ''}
+                  onClick={useAutoLanguageDetection}
+                >
+                  <Globe /> 자동 언어 감지
+                </button>
+              )}
               <div className="board-language-switch" aria-label="발화 언어 선택">
                 <button
                   className={!autoDetect && fixedLang === 'ko' ? 'active ko' : 'ko'}
@@ -1232,9 +1296,11 @@ export default function App() {
                   🇯🇵 日本語
                 </button>
               </div>
-              <button onClick={() => setBoardSwapped((value) => !value)}>
-                <SwitchCamera /> 좌우 전환
-              </button>
+              {mode !== 'auto' && (
+                <button onClick={() => setBoardSwapped((value) => !value)}>
+                  <SwitchCamera /> 좌우 전환
+                </button>
+              )}
               <div className="board-font-switch" aria-label="자막 글자 크기">
                 <span>글자</span>
                 {([1, 2, 3, 4, 5] as const).map((level) => (
@@ -1255,26 +1321,52 @@ export default function App() {
               <button className="board-exit" onClick={exitBoardMode}>
                 <Minimize2 /> 전체화면 종료
               </button>
-              <button className="board-exit" onClick={exitToAuth}>
+              <button className="board-exit" onClick={requestExitLivePage}>
                 <LogOut /> 나가기
               </button>
             </div>
           </header>
 
-          <section className="board-stage" aria-label="전체화면 번역 자막">
-            {boardCaptions.map((caption) => (
-              <article key={caption.lang} className={`board-caption ${caption.className}`}>
-                <div className={`board-pill ${caption.pillClass}`}>{caption.label}</div>
-                <p>{caption.text}</p>
+          {mode === 'auto' ? (
+            <section className="board-stage seminar-board-stage" aria-label="세미나 전체화면 통역 대본">
+              <article className="board-caption seminar-board-caption">
+                <div className="seminar-transcript-header board-seminar-header">
+                  <span>{LANG_LABELS[fixedLang]} 입력</span>
+                  <strong>{LANG_LABELS[oppositeLang(fixedLang)]} 번역</strong>
+                </div>
+                <div className="board-seminar-lines">
+                  {seminarEntries.length === 0 ? (
+                    <p className="seminar-placeholder board-seminar-placeholder">
+                      마이크로 말하거나 텍스트를 입력하면 원문과 번역문이 한 박스 안에 순서대로 쌓입니다.
+                    </p>
+                  ) : (
+                    seminarEntries.map((entry) => (
+                      <section key={entry.id} className={entry.isFinal ? 'done' : 'live'}>
+                        <p className="board-source-line">{entry.sourceText}</p>
+                        <p className="board-translation-line">{entry.translatedText}</p>
+                      </section>
+                    ))
+                  )}
+                </div>
               </article>
-            ))}
-          </section>
+            </section>
+          ) : (
+            <section className="board-stage" aria-label="전체화면 번역 자막">
+              {boardCaptions.map((caption) => (
+                <article key={caption.lang} className={`board-caption ${caption.className}`}>
+                  <div className={`board-pill ${caption.pillClass}`}>{caption.label}</div>
+                  <p>{caption.text}</p>
+                </article>
+              ))}
+            </section>
+          )}
 
           <footer className="board-footer">
             <span>경과 시간: <strong>{formatElapsed(elapsedSeconds)}</strong></span>
             <span>중계 모드: {currentMode.label} / 대형 자막 실시간 중계 대시보드</span>
             <span>PREMIUM REAL-TIME TRANSLATOR ENGINE</span>
           </footer>
+          {renderExitDialog()}
         </main>
       );
     }
@@ -1289,13 +1381,19 @@ export default function App() {
             <strong>{meetingTitle || 'Abridge 실시간 통역 세션'}</strong>
             <span>{currentMode.label} 모드 · {selectedProvider === 'mock' ? '로컬 데모 번역' : selectedProvider.toUpperCase()}</span>
           </div>
-          <button className="danger-button" onClick={exitLivePage}>
+          <button className="danger-button" onClick={requestExitLivePage}>
             <Square /> 종료
           </button>
         </header>
 
         <section className="live-shell">
-          <button className="launch-button live-launch" onClick={() => startListening()}>
+          <button
+            className="launch-button live-launch"
+            onClick={() => {
+              resetLiveSession();
+              void startListening();
+            }}
+          >
             <Play /> 실시간 AI 통역 미팅 개시 <Send />
           </button>
 
@@ -1322,7 +1420,7 @@ export default function App() {
               <button onClick={enterBoardMode}><Maximize2 /> 전체화면 보드</button>
               <button onClick={() => setStatus('paused')}><Pause /> 일시정지</button>
               <button onClick={saveCurrentMeeting}><Save /> 기록 저장</button>
-              <button onClick={exitLivePage}><Square /> 종료</button>
+              <button onClick={requestExitLivePage}><Square /> 종료</button>
             </div>
 
             {selectedProvider === 'mock' && (
@@ -1372,7 +1470,7 @@ export default function App() {
                     <strong>{roomMode === 'personal' && sessionCode ? sessionCode : '통역방 코드 없음'}</strong>
                     <small>
                       {roomMode === 'personal' && sessionCode
-                        ? `${location.origin}?room=personal&session=${sessionCode}`
+                        ? `입장 코드: ${sessionCode}`
                         : '통역방 생성 버튼을 누르면 게스트 초대 QR이 표시됩니다.'}
                     </small>
                   </div>
@@ -1491,6 +1589,7 @@ export default function App() {
             </div>
           </aside>
         </section>
+        {renderExitDialog()}
       </main>
     );
   }
