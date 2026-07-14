@@ -24,6 +24,8 @@ loadLocalEnv();
 type Message = {
   type: 'create-session' | 'join' | 'speaker-text' | 'ping';
   sessionCode?: string;
+  roomMode?: 'event' | 'personal';
+  role?: 'host' | 'guest';
   text?: string;
   sourceLang?: string;
   targetLang?: string;
@@ -42,7 +44,20 @@ type GeminiInteractionResponse = {
   error?: { message?: string };
 };
 
-const sessions = new Map<string, Set<WebSocket>>();
+type RoomMode = 'event' | 'personal';
+type RoomRole = 'host' | 'guest';
+
+type RoomParticipant = {
+  role: RoomRole;
+};
+
+type Room = {
+  mode: RoomMode;
+  participants: Map<WebSocket, RoomParticipant>;
+};
+
+const maxPersonalParticipants = 4;
+const sessions = new Map<string, Room>();
 const openAiModel = process.env.OPENAI_TRANSLATION_MODEL || 'gpt-4.1-mini';
 const geminiModel = process.env.GEMINI_TRANSLATION_MODEL || 'gemini-3.5-flash';
 const translationProvider = (process.env.TRANSLATION_PROVIDER || 'mock').toLowerCase();
@@ -56,6 +71,19 @@ function makeCode() {
 
 function send(socket: WebSocket, message: Record<string, unknown>) {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+}
+
+function broadcastRoomState(sessionCode: string, room: Room) {
+  room.participants.forEach((_participant, peer) =>
+    send(peer, {
+      type: 'room-state',
+      sessionCode,
+      roomMode: room.mode,
+      participantCount: room.participants.size,
+      maxParticipants: room.mode === 'personal' ? maxPersonalParticipants : undefined,
+      sentAt: Date.now(),
+    }),
+  );
 }
 
 function readJsonBody(request: http.IncomingMessage) {
@@ -329,33 +357,79 @@ wss.on('connection', (socket) => {
     const message = JSON.parse(String(data)) as Message;
     if (message.type === 'create-session') {
       currentSession = (message.sessionCode || makeCode()).toUpperCase();
-      sessions.set(currentSession, new Set([socket]));
-      send(socket, { type: 'session-created', sessionCode: currentSession, sentAt: Date.now() });
+      const roomMode = message.roomMode === 'personal' ? 'personal' : 'event';
+      const role: RoomRole = roomMode === 'personal' ? 'host' : message.role === 'guest' ? 'guest' : 'host';
+      const room: Room = {
+        mode: roomMode,
+        participants: new Map([[socket, { role }]]),
+      };
+      sessions.set(currentSession, room);
+      send(socket, {
+        type: 'session-created',
+        sessionCode: currentSession,
+        roomMode,
+        role,
+        participantCount: room.participants.size,
+        maxParticipants: roomMode === 'personal' ? maxPersonalParticipants : undefined,
+        sentAt: Date.now(),
+      });
+      broadcastRoomState(currentSession, room);
       return;
     }
 
     if (message.type === 'join' && message.sessionCode) {
       currentSession = message.sessionCode.toUpperCase();
-      const peers = sessions.get(currentSession) ?? new Set<WebSocket>();
-      peers.add(socket);
-      sessions.set(currentSession, peers);
-      send(socket, { type: 'join', sessionCode: currentSession, sentAt: Date.now() });
+      const existingRoom = sessions.get(currentSession);
+      if (!existingRoom) {
+        send(socket, {
+          type: 'error',
+          sessionCode: currentSession,
+          message: '세션을 찾지 못했습니다. 호스트가 먼저 방을 생성해야 합니다.',
+          sentAt: Date.now(),
+        });
+        return;
+      }
+      if (existingRoom.mode === 'personal' && existingRoom.participants.size >= maxPersonalParticipants) {
+        send(socket, {
+          type: 'error',
+          sessionCode: currentSession,
+          roomMode: existingRoom.mode,
+          message: '개인 통역방은 호스트 포함 최대 4명까지만 입장할 수 있습니다.',
+          sentAt: Date.now(),
+        });
+        return;
+      }
+      const role: RoomRole = existingRoom.mode === 'personal' ? 'guest' : message.role === 'host' ? 'host' : 'guest';
+      existingRoom.participants.set(socket, { role });
+      send(socket, {
+        type: 'joined',
+        sessionCode: currentSession,
+        roomMode: existingRoom.mode,
+        role,
+        participantCount: existingRoom.participants.size,
+        maxParticipants: existingRoom.mode === 'personal' ? maxPersonalParticipants : undefined,
+        sentAt: Date.now(),
+      });
+      broadcastRoomState(currentSession, existingRoom);
       return;
     }
 
     if (message.type === 'speaker-text' && currentSession) {
-      const peers = sessions.get(currentSession) ?? new Set<WebSocket>();
-      peers.forEach((peer) =>
+      const room = sessions.get(currentSession);
+      if (!room) return;
+      room.participants.forEach((_participant, peer) => {
+        if (room.mode === 'personal' && peer === socket) return;
         send(peer, {
           type: 'caption',
           sessionCode: currentSession,
+          roomMode: room.mode,
           text: message.text,
           sourceLang: message.sourceLang,
           targetLang: message.targetLang,
           translatedText: message.translatedText,
           sentAt: Date.now(),
-        }),
-      );
+        });
+      });
       return;
     }
 
@@ -364,9 +438,23 @@ wss.on('connection', (socket) => {
 
   socket.on('close', () => {
     if (!currentSession) return;
-    const peers = sessions.get(currentSession);
-    peers?.delete(socket);
-    if (peers?.size === 0) sessions.delete(currentSession);
+    const room = sessions.get(currentSession);
+    room?.participants.delete(socket);
+    if (!room || room.participants.size === 0) {
+      sessions.delete(currentSession);
+      return;
+    }
+    room.participants.forEach((_participant, peer) =>
+      send(peer, {
+        type: 'peer-left',
+        sessionCode: currentSession,
+        roomMode: room.mode,
+        participantCount: room.participants.size,
+        maxParticipants: room.mode === 'personal' ? maxPersonalParticipants : undefined,
+        sentAt: Date.now(),
+      }),
+    );
+    broadcastRoomState(currentSession, room);
   });
 });
 

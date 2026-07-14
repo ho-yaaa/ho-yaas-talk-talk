@@ -1,5 +1,6 @@
 export type Lang = 'ko' | 'ja' | 'en' | 'zh';
 export type Mode = 'earbud' | 'table' | 'auto' | 'event';
+export type VoiceGender = 'male' | 'female' | 'neutral';
 export type SessionStatus =
   | 'idle'
   | 'listening'

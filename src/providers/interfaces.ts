@@ -1,4 +1,4 @@
-import type { AppError, GlossaryTerm, Lang } from '../types';
+import type { AppError, GlossaryTerm, Lang, VoiceGender } from '../types';
 
 export interface SpeechChunk {
   text: string;
@@ -39,7 +39,7 @@ export interface TranslationProvider {
 export interface TextToSpeechProvider {
   name: string;
   isSupported(): boolean;
-  speak(text: string, lang: Lang, options?: { signal?: AbortSignal }): Promise<void>;
+  speak(text: string, lang: Lang, options?: { signal?: AbortSignal; voiceGender?: VoiceGender }): Promise<void>;
   stop(): void;
   getVoices(): SpeechSynthesisVoice[];
 }

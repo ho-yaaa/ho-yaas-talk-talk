@@ -1,12 +1,30 @@
 import type { Lang } from '../types';
 
+export type RealtimeRoomMode = 'event' | 'personal';
+export type RealtimeRole = 'host' | 'guest';
+
 export interface EventMessage {
-  type: 'create-session' | 'session-created' | 'join' | 'speaker-text' | 'caption' | 'error' | 'pong';
+  type:
+    | 'create-session'
+    | 'session-created'
+    | 'join'
+    | 'joined'
+    | 'room-state'
+    | 'peer-left'
+    | 'speaker-text'
+    | 'caption'
+    | 'error'
+    | 'pong';
   sessionCode?: string;
+  roomMode?: RealtimeRoomMode;
+  role?: RealtimeRole;
+  participantCount?: number;
+  maxParticipants?: number;
   text?: string;
   sourceLang?: Lang;
   targetLang?: Lang;
   translatedText?: string;
+  message?: string;
   sentAt?: number;
 }
 

@@ -36,7 +36,7 @@ import { calculateLatency } from './core/latency';
 import { decideDirection } from './core/language';
 import { shouldTranslateInterim } from './core/transcript';
 import { createProviders } from './providers/providerRegistry';
-import { RealtimeClient, type EventMessage } from './realtime/client';
+import { RealtimeClient, type EventMessage, type RealtimeRole } from './realtime/client';
 import { clearMeetings, getGlossary, listMeetings, saveGlossary, saveMeeting } from './storage/meetings';
 import type {
   AppError,
@@ -48,6 +48,7 @@ import type {
   Mode,
   SessionStatus,
   TranscriptEntry,
+  VoiceGender,
 } from './types';
 
 type GoogleCredentialResponse = {
@@ -76,6 +77,7 @@ type GoogleAccounts = {
 declare global {
   interface Window {
     google?: { accounts: GoogleAccounts };
+    webkitAudioContext?: typeof AudioContext;
   }
 }
 
@@ -95,6 +97,7 @@ const translationApiEndpoint = import.meta.env.VITE_TRANSLATION_API_URL ?? 'http
 const realtimeEndpoint = toRealtimeEndpoint(import.meta.env.VITE_REALTIME_WS_URL ?? translationApiEndpoint);
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '';
 const emptyGlossaryDraft = { source: '', target: '', note: '' };
+const maxPersonalRoomParticipants = 4;
 const boardFontSizes = {
   1: 'clamp(1.35rem, 2.2vw, 2.6rem)',
   2: 'clamp(1.55rem, 2.7vw, 3.2rem)',
@@ -137,6 +140,60 @@ function makeLocalSessionCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
+function getPersonalSessionFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const session = params.get('session')?.trim().toUpperCase() ?? '';
+  return params.get('room') === 'personal' && session ? session : '';
+}
+
+function estimatePitch(buffer: Float32Array, sampleRate: number) {
+  const minLag = Math.floor(sampleRate / 320);
+  const maxLag = Math.floor(sampleRate / 80);
+  let bestLag = -1;
+  let bestCorrelation = 0;
+  for (let lag = minLag; lag <= maxLag; lag += 1) {
+    let correlation = 0;
+    for (let i = 0; i < buffer.length - lag; i += 1) {
+      correlation += buffer[i] * buffer[i + lag];
+    }
+    if (correlation > bestCorrelation) {
+      bestCorrelation = correlation;
+      bestLag = lag;
+    }
+  }
+  return bestLag > 0 ? sampleRate / bestLag : 0;
+}
+
+async function sampleSpeakerVoiceGender(): Promise<VoiceGender> {
+  if (!navigator.mediaDevices?.getUserMedia) return 'neutral';
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const audioContext = new AudioContextClass();
+  const source = audioContext.createMediaStreamSource(stream);
+  const analyser = audioContext.createAnalyser();
+  analyser.fftSize = 2048;
+  source.connect(analyser);
+  const buffer = new Float32Array(analyser.fftSize);
+  const pitches: number[] = [];
+  const startedAt = performance.now();
+
+  while (performance.now() - startedAt < 850) {
+    analyser.getFloatTimeDomainData(buffer);
+    const rms = Math.sqrt(buffer.reduce((sum, value) => sum + value * value, 0) / buffer.length);
+    const pitch = rms > 0.012 ? estimatePitch(buffer, audioContext.sampleRate) : 0;
+    if (pitch >= 80 && pitch <= 320) pitches.push(pitch);
+    await new Promise((resolve) => window.setTimeout(resolve, 90));
+  }
+
+  stream.getTracks().forEach((track) => track.stop());
+  await audioContext.close().catch(() => undefined);
+  if (pitches.length < 2) return 'neutral';
+  const averagePitch = pitches.reduce((sum, pitch) => sum + pitch, 0) / pitches.length;
+  if (averagePitch < 165) return 'male';
+  if (averagePitch > 185) return 'female';
+  return 'neutral';
+}
+
 function loadGoogleIdentityScript() {
   return new Promise<void>((resolve, reject) => {
     if (window.google?.accounts?.id) {
@@ -174,6 +231,12 @@ function makeError(area: AppError['area'], code: string, message: string, raw?: 
   return { id: crypto.randomUUID(), area, code, message, raw: serializeError(raw), timestamp: Date.now() };
 }
 
+function voiceGenderLabel(gender: VoiceGender) {
+  if (gender === 'male') return '남성 톤';
+  if (gender === 'female') return '여성 톤';
+  return '기본 톤';
+}
+
 export default function App() {
   const [mode, setMode] = useState<Mode>('earbud');
   const [view, setView] = useState<'auth' | 'setup' | 'live' | 'glossary'>('auth');
@@ -186,6 +249,7 @@ export default function App() {
   const [autoDetect, setAutoDetect] = useState(true);
   const [fixedLang, setFixedLang] = useState<Lang>('ko');
   const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [speakerVoiceGender, setSpeakerVoiceGender] = useState<VoiceGender>('neutral');
   const [briefing, setBriefing] = useState(BRIEFING_PRESETS[0]);
   const [manualText, setManualText] = useState('');
   const [sourceCaption, setSourceCaption] = useState('');
@@ -203,6 +267,10 @@ export default function App() {
   const [sessionCode, setSessionCode] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [qr, setQr] = useState('');
+  const [roomRole, setRoomRole] = useState<RealtimeRole | null>(null);
+  const [roomMode, setRoomMode] = useState<'event' | 'personal' | null>(null);
+  const [participantCount, setParticipantCount] = useState(0);
+  const [roomNotice, setRoomNotice] = useState('');
   const [flipped, setFlipped] = useState(false);
   const [wakeLockState, setWakeLockState] = useState('미사용');
   const [online, setOnline] = useState(navigator.onLine);
@@ -218,6 +286,8 @@ export default function App() {
   const speechRestartTimer = useRef<number | undefined>(undefined);
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
   const googleCredentialHandler = useRef<(response: GoogleCredentialResponse) => void>(() => undefined);
+  const speakerVoiceGenderRef = useRef<VoiceGender>('neutral');
+  const voiceSamplingRef = useRef(false);
   const meetingStart = useRef(Date.now());
   const userStopped = useRef(false);
 
@@ -258,10 +328,20 @@ export default function App() {
         { lang: 'ko', className: 'source-board', pillClass: 'ko-pill', label: '🇰🇷 한국어 / KOREAN', text: koreanBoardText },
         { lang: 'ja', className: 'target-board', pillClass: 'ja-pill', label: '🇯🇵 日本語 / JAPANESE', text: japaneseBoardText },
       ];
+  const seminarEntries = entries.filter((entry) => entry.mode === 'auto').slice(-20);
 
   useEffect(() => {
     getGlossary().then(setGlossary).catch(() => setGlossary(DEFAULT_GLOSSARY));
     listMeetings().then(setMeetings).catch(() => undefined);
+    const urlSessionCode = getPersonalSessionFromUrl();
+    if (urlSessionCode) {
+      setMode('earbud');
+      setJoinCode(urlSessionCode);
+      setFixedLang('ja');
+      setAutoDetect(false);
+      setRoomMode('personal');
+      setRoomNotice('개인 통역방 초대 링크가 감지되었습니다. 게스트 모드로 시작하면 바로 입장할 수 있습니다.');
+    }
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
     window.addEventListener('online', onOnline);
@@ -275,6 +355,12 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    if (mode !== 'auto') return;
+    setAutoDetect(false);
+    activeSpeechLang.current = fixedLang;
+  }, [fixedLang, mode]);
 
   useEffect(() => {
     saveGlossary(glossary).catch((error) =>
@@ -448,12 +534,18 @@ export default function App() {
       }
       broadcastCaption(entry);
 
-      if (voiceEnabled && translatedText.trim()) {
+      const shouldSpeakLocally =
+        voiceEnabled && translatedText.trim() && !(mode === 'earbud' && roomMode === 'personal' && roomRole);
+      if (shouldSpeakLocally) {
         setStatus('speaking');
         setMarks((prev) => ({ ...prev, firstSpeechOutput: prev.firstSpeechOutput ?? now() }));
-        providers.tts.speak(translatedText, direction.targetLang).catch((error) => {
-          setErrors((prev) => [makeError('tts', 'speak-failed', '음성 출력 실패', error), ...prev]);
-        });
+        providers.tts
+          .speak(translatedText, direction.targetLang, {
+            voiceGender: mode === 'earbud' ? speakerVoiceGenderRef.current : 'neutral',
+          })
+          .catch((error) => {
+            setErrors((prev) => [makeError('tts', 'speak-failed', '음성 출력 실패', error), ...prev]);
+          });
       } else {
         setStatus('listening');
       }
@@ -496,6 +588,21 @@ export default function App() {
     userStopped.current = false;
     setMarks({ micStart: now() });
     setStatus('listening');
+    if (mode === 'earbud' && !voiceSamplingRef.current) {
+      voiceSamplingRef.current = true;
+      sampleSpeakerVoiceGender()
+        .then((gender) => {
+          speakerVoiceGenderRef.current = gender;
+          setSpeakerVoiceGender(gender);
+        })
+        .catch(() => {
+          speakerVoiceGenderRef.current = 'neutral';
+          setSpeakerVoiceGender('neutral');
+        })
+        .finally(() => {
+          voiceSamplingRef.current = false;
+        });
+    }
     const listeningLang = langOverride ?? (autoDetect ? activeSpeechLang.current : fixedLang);
     activeSpeechLang.current = listeningLang;
     if (!speechSupported) {
@@ -569,6 +676,7 @@ export default function App() {
     const allowed = await requestLoginMicrophoneAccess();
     if (!allowed) return;
     setAuthMode('google');
+    if (joinPersonalRoomFromInvite()) return;
     setView('setup');
   }
 
@@ -579,11 +687,21 @@ export default function App() {
   function startAsGuest() {
     setAuthMode('guest');
     setAuthError('');
+    if (joinPersonalRoomFromInvite()) return;
     setView('setup');
   }
 
   function exitToAuth() {
     stopListening();
+    realtime.current?.close();
+    realtime.current = null;
+    setWsStatus('disconnected');
+    setSessionCode('');
+    setQr('');
+    setRoomRole(null);
+    setRoomMode(null);
+    setParticipantCount(0);
+    setRoomNotice('');
     setBoardMode(false);
     setView('auth');
     setAuthMode(null);
@@ -591,6 +709,12 @@ export default function App() {
 
   function exitLivePage() {
     stopListening();
+    realtime.current?.close();
+    realtime.current = null;
+    setWsStatus('disconnected');
+    setRoomRole(null);
+    setRoomMode(null);
+    setParticipantCount(0);
     setBoardMode(false);
     setView('setup');
   }
@@ -740,41 +864,140 @@ export default function App() {
     client.connect();
   }
 
-  function setEventSessionCode(nextSessionCode: string) {
+  function sendRealtimeSoon(message: EventMessage) {
+    window.setTimeout(() => realtime.current?.send(message), 180);
+    window.setTimeout(() => realtime.current?.send(message), 780);
+  }
+
+  function setRealtimeSessionCode(nextSessionCode: string, nextRoomMode: 'event' | 'personal') {
     const normalizedCode = nextSessionCode.toUpperCase();
     setSessionCode(normalizedCode);
-    QRCode.toDataURL(`${location.origin}?session=${normalizedCode}`, { margin: 1, width: 320 })
+    const sessionUrl =
+      nextRoomMode === 'personal'
+        ? `${location.origin}?room=personal&session=${normalizedCode}`
+        : `${location.origin}?session=${normalizedCode}`;
+    QRCode.toDataURL(sessionUrl, { margin: 1, width: 320 })
       .then(setQr)
       .catch(() => undefined);
   }
 
   function handleRealtimeMessage(message: EventMessage) {
     if (message.type === 'session-created' && message.sessionCode) {
-      setEventSessionCode(message.sessionCode);
+      const nextRoomMode = message.roomMode ?? 'event';
+      setRealtimeSessionCode(message.sessionCode, nextRoomMode);
+      setRoomMode(nextRoomMode);
+      setRoomRole(message.role ?? null);
+      setParticipantCount(message.participantCount ?? 1);
+      setRoomNotice(nextRoomMode === 'personal' ? '개인 통역방이 생성되었습니다. QR로 게스트를 초대하세요.' : '');
+    }
+    if (message.type === 'joined' && message.sessionCode) {
+      const nextRoomMode = message.roomMode ?? 'event';
+      setRealtimeSessionCode(message.sessionCode, nextRoomMode);
+      setRoomMode(nextRoomMode);
+      setRoomRole(message.role ?? null);
+      setParticipantCount(message.participantCount ?? 1);
+      setRoomNotice(nextRoomMode === 'personal' ? '개인 통역방에 입장했습니다. 상대방 발화는 번역 음성으로 재생됩니다.' : '참석자 연결이 완료되었습니다.');
+    }
+    if ((message.type === 'room-state' || message.type === 'peer-left') && message.sessionCode) {
+      setParticipantCount(message.participantCount ?? 0);
+      if (message.type === 'peer-left') setRoomNotice('참여자 1명이 방에서 나갔습니다.');
+    }
+    if (message.type === 'error') {
+      setRoomNotice(message.message ?? '실시간 세션 연결 중 오류가 발생했습니다.');
+      setErrors((prev) => [makeError('websocket', 'room-error', message.message ?? '실시간 세션 오류', message), ...prev]);
     }
     if (message.type === 'caption' && message.text && message.translatedText) {
       setSourceCaption(message.text);
       setTranslationCaption(message.translatedText);
+      if (message.roomMode === 'personal' && message.sourceLang && message.targetLang) {
+        const remoteEntry: TranscriptEntry = {
+          id: crypto.randomUUID(),
+          mode: 'earbud',
+          sourceLang: message.sourceLang,
+          targetLang: message.targetLang,
+          sourceText: message.text,
+          translatedText: message.translatedText,
+          isFinal: true,
+          createdAt: Date.now(),
+          latency: calculateLatency({}),
+        };
+        setEntries((prev) => [...prev, remoteEntry].slice(-80));
+        if (voiceEnabled) {
+          setStatus('speaking');
+          providers.tts
+            .speak(message.translatedText, message.targetLang)
+            .catch((error) => {
+              setErrors((prev) => [makeError('tts', 'remote-speak-failed', '상대방 통역 음성 출력 실패', error), ...prev]);
+            })
+            .finally(() => setStatus('listening'));
+        }
+      }
     }
   }
 
   function createEventSession() {
     const nextSessionCode = makeLocalSessionCode();
-    setEventSessionCode(nextSessionCode);
+    setRealtimeSessionCode(nextSessionCode, 'event');
+    setRoomMode('event');
+    setRoomRole('host');
+    setParticipantCount(1);
     connectRealtime();
-    window.setTimeout(() => realtime.current?.send({ type: 'create-session', sessionCode: nextSessionCode } as EventMessage), 150);
+    sendRealtimeSoon({ type: 'create-session', sessionCode: nextSessionCode, roomMode: 'event', role: 'host' } as EventMessage);
   }
 
   function joinEventSession() {
     connectRealtime();
-    window.setTimeout(() => realtime.current?.send({ type: 'join', sessionCode: joinCode.toUpperCase() } as EventMessage), 150);
+    sendRealtimeSoon({ type: 'join', sessionCode: joinCode.toUpperCase(), roomMode: 'event', role: 'guest' } as EventMessage);
+  }
+
+  function createPersonalRoom() {
+    const nextSessionCode = makeLocalSessionCode();
+    setRealtimeSessionCode(nextSessionCode, 'personal');
+    setRoomMode('personal');
+    setRoomRole('host');
+    setParticipantCount(1);
+    setFixedLang('ko');
+    setAutoDetect(false);
+    connectRealtime();
+    sendRealtimeSoon({ type: 'create-session', sessionCode: nextSessionCode, roomMode: 'personal', role: 'host' } as EventMessage);
+  }
+
+  function joinPersonalRoom(nextJoinCode = joinCode) {
+    const normalizedJoinCode = nextJoinCode.trim().toUpperCase();
+    if (!normalizedJoinCode) {
+      setRoomNotice('입장할 개인 통역방 코드를 입력해주세요.');
+      return;
+    }
+    setJoinCode(normalizedJoinCode);
+    setRoomMode('personal');
+    setRoomRole('guest');
+    setFixedLang('ja');
+    setAutoDetect(false);
+    connectRealtime();
+    sendRealtimeSoon({ type: 'join', sessionCode: normalizedJoinCode, roomMode: 'personal', role: 'guest' } as EventMessage);
+  }
+
+  function joinPersonalRoomFromInvite() {
+    const urlSessionCode = getPersonalSessionFromUrl();
+    if (!urlSessionCode) return false;
+    meetingStart.current = Date.now();
+    setElapsedSeconds(0);
+    setMode('earbud');
+    setView('live');
+    window.setTimeout(() => {
+      joinPersonalRoom(urlSessionCode);
+      void startListening('ja');
+    }, 250);
+    return true;
   }
 
   function broadcastCaption(entry: TranscriptEntry) {
-    if (mode !== 'event') return;
+    if (mode !== 'event' && !(mode === 'earbud' && roomMode === 'personal' && roomRole)) return;
+    if (mode === 'earbud' && !entry.isFinal) return;
     realtime.current?.send({
       type: 'speaker-text',
       sessionCode,
+      roomMode: mode === 'earbud' ? 'personal' : 'event',
       text: entry.sourceText,
       sourceLang: entry.sourceLang,
       targetLang: entry.targetLang,
@@ -1080,17 +1303,22 @@ export default function App() {
             <div className="console-toolbar">
               <span className={`status ${latency.delayed ? 'warn' : ''}`}>{statusLabel[status]}</span>
               <div className="quick-language-controls" aria-label="빠른 발화 언어 선택">
-                <button className={autoDetect ? 'active' : ''} onClick={useAutoLanguageDetection}>
-                  <Globe /> 자동 감지
-                </button>
+                {mode !== 'auto' && (
+                  <button className={autoDetect ? 'active' : ''} onClick={useAutoLanguageDetection}>
+                    <Globe /> 자동 감지
+                  </button>
+                )}
                 <button className={!autoDetect && fixedLang === 'ko' ? 'active ko' : 'ko'} onClick={() => setListeningLanguage('ko')}>
-                  🇰🇷 한국어 고정
+                  🇰🇷 {mode === 'auto' ? '한국어 입력' : '한국어 고정'}
                 </button>
                 <button className={!autoDetect && fixedLang === 'ja' ? 'active ja' : 'ja'} onClick={() => setListeningLanguage('ja')}>
-                  🇯🇵 日本語 고정
+                  🇯🇵 {mode === 'auto' ? '日本語 입력' : '日本語 고정'}
                 </button>
               </div>
               <label><input type="checkbox" checked={voiceEnabled} onChange={(e) => setVoiceEnabled(e.target.checked)} /> 음성 합성</label>
+              {mode === 'earbud' && voiceEnabled && (
+                <span className="voice-tone-badge">통역 음성: {voiceGenderLabel(speakerVoiceGender)}</span>
+              )}
               <button onClick={enterBoardMode}><Maximize2 /> 전체화면 보드</button>
               <button onClick={() => setStatus('paused')}><Pause /> 일시정지</button>
               <button onClick={saveCurrentMeeting}><Save /> 기록 저장</button>
@@ -1120,25 +1348,89 @@ export default function App() {
               <button type="submit"><Send /> 번역</button>
             </form>
 
-            <section className={`caption-stage ${mode}`}>
-              <div className="caption source">
-                <span>{LANG_LABELS[decideDirection(sourceCaption || manualText, autoDetect, fixedLang).sourceLang]}</span>
-                <p>{sourceCaption || '통역 화면에서 마이크 사용 허용을 누르면 바로 대화 인식을 시작합니다.'}</p>
+            {mode === 'earbud' && (
+              <div className="personal-room-box" aria-label="개인 통역 음성 채팅방">
+                <div className="personal-room-summary">
+                  <strong>개인 통역 음성 채팅방</strong>
+                  <span>
+                    {roomRole === 'host' ? '호스트' : roomRole === 'guest' ? '게스트' : '미연결'} · {participantCount || 0}/{maxPersonalRoomParticipants}명
+                  </span>
+                  <small>
+                    내 발화는 상대 기기에서 번역 음성으로 재생되고, 상대 발화는 내 기기에서 번역 음성으로 재생됩니다.
+                  </small>
+                </div>
+                <button onClick={createPersonalRoom}>
+                  <QrCode /> 통역방 생성
+                </button>
+                <div className="event-session-card personal-session-card">
+                  {qr && roomMode === 'personal' ? (
+                    <img src={qr} alt="personal room qr" />
+                  ) : (
+                    <span className="event-qr-placeholder"><QrCode /></span>
+                  )}
+                  <div>
+                    <strong>{roomMode === 'personal' && sessionCode ? sessionCode : '통역방 코드 없음'}</strong>
+                    <small>
+                      {roomMode === 'personal' && sessionCode
+                        ? `${location.origin}?room=personal&session=${sessionCode}`
+                        : '통역방 생성 버튼을 누르면 게스트 초대 QR이 표시됩니다.'}
+                    </small>
+                  </div>
+                </div>
+                <input
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value)}
+                  placeholder="게스트 입장 코드 입력"
+                />
+                <button onClick={() => joinPersonalRoom()}>
+                  <Users /> 통역방 입장
+                </button>
+                {roomNotice && <p className="room-notice">{roomNotice}</p>}
               </div>
-              <div className={`caption translated ${isFinalCaption ? 'final' : 'interim'}`}>
-                <span>{LANG_LABELS[decideDirection(sourceCaption || manualText, autoDetect, fixedLang).targetLang]} {isFinalCaption ? '최종' : '중간'}</span>
-                <p>{translationCaption || '텍스트를 입력하거나 마이크로 말하면 번역 결과가 여기에 표시됩니다.'}</p>
-              </div>
-              <div className="log" aria-label="conversation log">
-                {entries.map((entry) => (
-                  <article key={entry.id} className={entry.isFinal ? 'done' : 'live'}>
-                    <small>{new Date(entry.createdAt).toLocaleTimeString()} · {entry.latency.totalMs ? Math.round(entry.latency.totalMs) : '-'}ms</small>
-                    <p>{entry.sourceText}</p>
-                    <strong>{entry.translatedText}</strong>
-                  </article>
-                ))}
-              </div>
-            </section>
+            )}
+
+            {mode === 'auto' ? (
+              <section className="seminar-transcript" aria-label="세미나 통역 대본">
+                <div className="seminar-transcript-header">
+                  <span>{LANG_LABELS[fixedLang]} 입력</span>
+                  <strong>{LANG_LABELS[oppositeLang(fixedLang)]} 번역</strong>
+                </div>
+                <div className="seminar-transcript-lines">
+                  {seminarEntries.length === 0 ? (
+                    <p className="seminar-placeholder">
+                      마이크로 말하거나 텍스트를 입력하면 원문과 번역문이 한 박스 안에 순서대로 쌓입니다.
+                    </p>
+                  ) : (
+                    seminarEntries.map((entry) => (
+                      <article key={entry.id} className={entry.isFinal ? 'done' : 'live'}>
+                        <p className="source-line">{entry.sourceText}</p>
+                        <p className="translation-line">{entry.translatedText}</p>
+                      </article>
+                    ))
+                  )}
+                </div>
+              </section>
+            ) : (
+              <section className={`caption-stage ${mode}`}>
+                <div className="caption source">
+                  <span>{LANG_LABELS[decideDirection(sourceCaption || manualText, autoDetect, fixedLang).sourceLang]}</span>
+                  <p>{sourceCaption || '통역 화면에서 마이크 사용 허용을 누르면 바로 대화 인식을 시작합니다.'}</p>
+                </div>
+                <div className={`caption translated ${isFinalCaption ? 'final' : 'interim'}`}>
+                  <span>{LANG_LABELS[decideDirection(sourceCaption || manualText, autoDetect, fixedLang).targetLang]} {isFinalCaption ? '최종' : '중간'}</span>
+                  <p>{translationCaption || '텍스트를 입력하거나 마이크로 말하면 번역 결과가 여기에 표시됩니다.'}</p>
+                </div>
+                <div className="log" aria-label="conversation log">
+                  {entries.map((entry) => (
+                    <article key={entry.id} className={entry.isFinal ? 'done' : 'live'}>
+                      <small>{new Date(entry.createdAt).toLocaleTimeString()} · {entry.latency.totalMs ? Math.round(entry.latency.totalMs) : '-'}ms</small>
+                      <p>{entry.sourceText}</p>
+                      <strong>{entry.translatedText}</strong>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {mode === 'table' && (
               <div className="primary-actions">

@@ -857,6 +857,19 @@ button:disabled {
   font-weight: 800;
 }
 
+.voice-tone-badge {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  background: rgba(30, 64, 175, 0.18);
+  color: #b8d7ff;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 .quick-language-controls {
   display: inline-flex;
   align-items: center;
@@ -970,6 +983,79 @@ button:disabled {
   border-color: rgba(99, 102, 241, 0.65);
 }
 
+.seminar-transcript {
+  min-height: 460px;
+  border: 1px solid rgba(32, 42, 60, 0.95);
+  border-radius: 16px;
+  background: #03070c;
+  padding: clamp(18px, 3vw, 32px);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 18px;
+}
+
+.seminar-transcript-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(32, 42, 60, 0.95);
+  color: #82b3ff;
+  font-weight: 1000;
+}
+
+.seminar-transcript-header strong {
+  color: #bda3ff;
+}
+
+.seminar-transcript-lines {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 22px;
+  max-height: min(64vh, 620px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.seminar-transcript article {
+  display: grid;
+  gap: 8px;
+}
+
+.seminar-transcript article.live {
+  opacity: 0.72;
+}
+
+.seminar-transcript p {
+  margin: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.seminar-placeholder {
+  color: #6f8098;
+  font-size: clamp(1.35rem, 3vw, 2.35rem);
+  line-height: 1.42;
+  align-self: center;
+}
+
+.source-line,
+.translation-line {
+  font-size: clamp(1.8rem, 4vw, 4.2rem);
+  line-height: 1.16;
+  font-weight: 850;
+}
+
+.source-line {
+  color: #e7eef8;
+}
+
+.translation-line {
+  color: #bda3ff;
+}
+
 .log {
   grid-column: 1 / -1;
   max-height: 260px;
@@ -987,6 +1073,53 @@ button:disabled {
   grid-template-columns: auto minmax(260px, 1fr) minmax(220px, 0.8fr) auto;
   gap: 14px;
   align-items: center;
+}
+
+.personal-room-box {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) auto minmax(0, 1.15fr) minmax(0, 0.8fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid rgba(37, 99, 235, 0.32);
+  border-radius: 18px;
+  background: rgba(6, 12, 23, 0.72);
+}
+
+.personal-room-box > * {
+  min-width: 0;
+}
+
+.personal-room-summary {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.personal-room-summary strong {
+  color: #f1f5f9;
+  font-size: 1rem;
+}
+
+.personal-room-summary span {
+  color: #60a5fa;
+  font-weight: 900;
+}
+
+.personal-room-summary small,
+.room-notice {
+  color: #94a3b8;
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.personal-session-card {
+  min-height: 94px;
+}
+
+.room-notice {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .event-session-card {
@@ -1379,7 +1512,8 @@ footer svg {
   .mode-card-grid,
   .caption-stage,
   .manual,
-  .event-box {
+  .event-box,
+  .personal-room-box {
     grid-template-columns: 1fr;
   }
 
