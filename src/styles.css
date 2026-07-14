@@ -1399,9 +1399,14 @@ button:disabled {
 }
 
 .seminar-board-caption {
-  min-height: min(68vh, 780px);
+  min-height: min(72vh, 820px);
   align-items: stretch;
-  gap: clamp(20px, 3vh, 36px);
+  gap: 0;
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: clamp(8px, 2.4vw, 36px);
 }
 
 .seminar-board-caption::before {
@@ -1409,27 +1414,32 @@ button:disabled {
 }
 
 .board-seminar-header {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
   grid-row: 1;
   grid-column: 1 / -1;
-  padding-bottom: 20px;
-  font-size: clamp(1.1rem, 1.5vw, 1.65rem);
+  padding-bottom: 0;
 }
 
 .board-seminar-lines {
-  grid-row: 2;
+  grid-row: 1 / -1;
   grid-column: 1 / -1;
   min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  gap: clamp(18px, 2.8vh, 34px);
-  padding-right: 8px;
+  gap: clamp(46px, 8vh, 92px);
+  padding: clamp(8px, 2vh, 18px) clamp(6px, 1.2vw, 18px) clamp(24px, 5vh, 56px);
 }
 
 .board-seminar-lines section {
   display: grid;
-  gap: clamp(7px, 1vh, 12px);
+  gap: clamp(10px, 1.8vh, 22px);
 }
 
 .board-seminar-lines section.live {
@@ -1438,29 +1448,33 @@ button:disabled {
 
 .board-seminar-lines p,
 .seminar-board-caption .board-seminar-placeholder {
+  grid-row: auto;
+  grid-column: auto;
+  place-self: auto;
   margin: 0;
   text-align: left;
   word-break: keep-all;
   overflow-wrap: anywhere;
   display: block;
+  width: auto;
   max-height: none;
   overflow: visible;
   -webkit-line-clamp: unset;
   -webkit-box-orient: initial;
 }
 
-.board-source-line {
-  color: #93bfff;
-  font-size: calc(var(--board-caption-font-size) * 0.7);
+.seminar-board-caption .board-source-line {
+  color: rgba(226, 232, 240, 0.82);
+  font-size: calc(var(--board-caption-font-size) * 0.854);
   line-height: 1.18;
-  font-weight: 800;
+  font-weight: 650;
 }
 
-.board-translation-line {
-  color: #f1f5f9;
-  font-size: var(--board-caption-font-size);
-  line-height: var(--board-caption-line-height);
-  font-weight: 900;
+.seminar-board-caption .board-translation-line {
+  color: #ffffff;
+  font-size: calc(var(--board-caption-font-size) * 1.22);
+  line-height: 1.05;
+  font-weight: 920;
 }
 
 .seminar-board-caption .board-seminar-placeholder {
