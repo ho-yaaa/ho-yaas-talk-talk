@@ -124,6 +124,43 @@ REALTIME_SERVER_URL=ws://127.0.0.1:8788
 
 `VITE_TRANSLATION_PROVIDER=gpt`, `openai`, 또는 `gemini`를 설정하면 로컬 서버 proxy를 통해 실제 AI 번역 provider를 사용합니다. mock provider는 API 키 없이 UI와 흐름 검증용으로 유지됩니다.
 
+## Google 로그인 설정
+
+Google Cloud Console의 OAuth 2.0 클라이언트 ID 중 `웹 애플리케이션` 유형을 사용합니다. 로컬 개발 중에는 승인된 JavaScript 원본에 아래 주소를 추가하세요.
+
+```txt
+http://localhost:5173
+http://127.0.0.1:5173
+```
+
+`.env`에는 Client ID만 넣습니다. Client Secret은 브라우저 앱에 넣지 않습니다.
+
+```env
+VITE_GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+```
+
+Google 로그인 성공 후 앱이 브라우저 마이크 권한을 요청합니다. 마이크 권한을 거부하면 Google 계정 모드로 앱에 진입하지 않습니다.
+
+## Render 통합 배포
+
+이 앱은 React 화면, `/api/translate`, 행사 WebSocket을 같은 Node 서버에서 제공할 수 있습니다. Render Web Service에 GitHub 저장소를 연결하고 `render.yaml`을 사용하면 됩니다.
+
+Render 대시보드에서 실제 비밀값은 환경변수로 직접 입력하세요.
+
+```env
+TRANSLATION_PROVIDER=gemini
+VITE_TRANSLATION_PROVIDER=gemini
+VITE_TRANSLATION_API_URL=/api/translate
+GEMINI_API_KEY=your-gemini-api-key
+VITE_GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+```
+
+배포 URL이 정해지면 Google Cloud Console의 OAuth 클라이언트에 승인된 JavaScript 원본으로 배포 도메인을 추가하세요.
+
+```txt
+https://your-render-service.onrender.com
+```
+
 ## 수동 점검 체크리스트
 
 - Chrome에서 시작 버튼 클릭 시 마이크 권한 요청 확인
@@ -139,5 +176,5 @@ REALTIME_SERVER_URL=ws://127.0.0.1:8788
 
 - mock provider는 실제 번역 품질을 목표로 하지 않습니다. API 키 없이 자막 흐름, 취소, 지연 측정, 기록 저장을 확인하기 위한 로컬 데모입니다.
 - SpeechRecognition의 실제 지연은 브라우저 구현과 네트워크 상태에 좌우됩니다.
-- 행사 모드는 로컬 개발 서버 데모입니다. 외부 공개 배포에는 별도 인프라와 보안 검토가 필요하며 비용이 발생할 수 있습니다.
+- 행사 모드는 Render 같은 WebSocket 지원 Node 서버에 배포해야 외부 참석자 QR 연결이 가능합니다. 공개 배포에는 보안 검토와 비용이 발생할 수 있습니다.
 - AI 요약은 외부 provider 연결 전에는 “연결 필요” 상태로 남겨둡니다.

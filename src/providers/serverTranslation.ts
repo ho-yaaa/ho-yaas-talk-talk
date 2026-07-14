@@ -24,9 +24,13 @@ export class ServerTranslationProvider implements TranslationProvider {
       signal: request.signal,
     });
 
-    const data = (await response.json()) as { translatedText?: string; error?: string };
+    const data = (await response.json().catch(() => ({}))) as {
+      translatedText?: string;
+      error?: string;
+      provider?: string;
+    };
     if (!response.ok) {
-      throw new Error(data.error ?? 'GPT translation request failed');
+      throw new Error(data.error ?? `Translation proxy request failed with HTTP ${response.status}`);
     }
     return data.translatedText ?? '';
   }

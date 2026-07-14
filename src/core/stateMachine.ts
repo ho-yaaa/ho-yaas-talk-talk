@@ -42,6 +42,7 @@ const transitions: Record<SessionStatus, Partial<Record<SessionEvent, SessionSta
     ERROR: 'error',
   },
   paused: { RESUME: 'listening', STOP: 'idle', ERROR: 'error' },
+  'mic-blocked': { START: 'listening', STOP: 'idle', RECOVER: 'listening' },
   error: { RECOVER: 'listening', STOP: 'idle' },
 };
 

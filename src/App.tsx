@@ -1,6 +1,8 @@
 import {
+  ArrowLeft,
   BookOpen,
   CalendarDays,
+  Check,
   Download,
   Ear,
   Eraser,
@@ -8,22 +10,27 @@ import {
   Languages,
   Lightbulb,
   LogOut,
+  Maximize2,
+  Minimize2,
   Moon,
   Pause,
   Play,
   QrCode,
   RotateCcw,
+  Save,
   Send,
   Sparkles,
   Square,
+  SwitchCamera,
   Tablet,
+  Trash2,
   User,
   Users,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 import QRCode from 'qrcode';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { BRIEFING_PRESETS, DEFAULT_GLOSSARY, LANG_LABELS, MODES } from './constants';
 import { calculateLatency } from './core/latency';
 import { decideDirection } from './core/language';
@@ -31,7 +38,46 @@ import { shouldTranslateInterim } from './core/transcript';
 import { createProviders } from './providers/providerRegistry';
 import { RealtimeClient, type EventMessage } from './realtime/client';
 import { clearMeetings, getGlossary, listMeetings, saveGlossary, saveMeeting } from './storage/meetings';
-import type { AppError, GlossaryTerm, Lang, LatencyMarks, MeetingRecord, Mode, SessionStatus, TranscriptEntry } from './types';
+import type {
+  AppError,
+  GlossarySuggestion,
+  GlossaryTerm,
+  Lang,
+  LatencyMarks,
+  MeetingRecord,
+  Mode,
+  SessionStatus,
+  TranscriptEntry,
+} from './types';
+
+type GoogleCredentialResponse = {
+  credential?: string;
+  select_by?: string;
+};
+
+type GoogleAccounts = {
+  id: {
+    initialize: (config: { client_id: string; callback: (response: GoogleCredentialResponse) => void }) => void;
+    renderButton: (
+      parent: HTMLElement,
+      options: {
+        theme?: 'outline' | 'filled_blue' | 'filled_black';
+        size?: 'large' | 'medium' | 'small';
+        text?: 'signin_with' | 'signup_with' | 'continue_with' | 'signin';
+        shape?: 'rectangular' | 'pill' | 'circle' | 'square';
+        width?: number;
+        locale?: string;
+      },
+    ) => void;
+    cancel: () => void;
+  };
+};
+
+declare global {
+  interface Window {
+    google?: { accounts: GoogleAccounts };
+  }
+}
 
 const statusLabel: Record<SessionStatus, string> = {
   idle: '대기 중',
@@ -40,22 +86,100 @@ const statusLabel: Record<SessionStatus, string> = {
   translating: '번역 중',
   speaking: '출력 중',
   paused: '일시정지',
+  'mic-blocked': '마이크 권한 필요',
   error: '오류',
 };
 
 const providers = createProviders();
+const translationApiEndpoint = import.meta.env.VITE_TRANSLATION_API_URL ?? 'http://127.0.0.1:8788/api/translate';
+const realtimeEndpoint = toRealtimeEndpoint(import.meta.env.VITE_REALTIME_WS_URL ?? translationApiEndpoint);
+const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '';
+const emptyGlossaryDraft = { source: '', target: '', note: '' };
+const boardFontSizes = {
+  1: 'clamp(1.35rem, 2.2vw, 2.6rem)',
+  2: 'clamp(1.55rem, 2.7vw, 3.2rem)',
+  3: 'clamp(1.75rem, 3.5vw, 4rem)',
+  4: 'clamp(2rem, 4.1vw, 4.8rem)',
+  5: 'clamp(2.25rem, 4.8vw, 5.6rem)',
+} as const;
+const beautySuggestionSeeds: Array<Omit<GlossarySuggestion, 'id' | 'occurrences'>> = [
+  { source: '레이어드 컷', target: 'レイヤーカット', note: '미용 시술 용어' },
+  { source: '두피 보호제', target: '頭皮保護剤', note: '미용 시술 용어' },
+  { source: '애쉬 브라운', target: 'アッシュブラウン', note: '헤어 컬러 용어' },
+  { source: '소프트 애쉬', target: 'ソフトアッシュ', note: '헤어 컬러 용어' },
+  { source: '다운펌', target: 'ダウンパーマ', note: '미용 시술 용어' },
+  { source: '뿌리 염색', target: 'リタッチカラー', note: '미용 시술 용어' },
+  { source: '클리닉', target: 'ヘアトリートメント', note: '미용 시술 용어' },
+  { source: '손상모', target: 'ダメージヘア', note: '미용 상담 용어' },
+];
 
 function now() {
   return performance.now();
 }
 
+function toRealtimeEndpoint(endpoint: string) {
+  try {
+    const url = new URL(endpoint, window.location.origin);
+    if (url.protocol === 'ws:' || url.protocol === 'wss:') {
+      return url.toString().replace(/\/$/, '');
+    }
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.pathname = '';
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return 'ws://127.0.0.1:8788';
+  }
+}
+
+function makeLocalSessionCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+function loadGoogleIdentityScript() {
+  return new Promise<void>((resolve, reject) => {
+    if (window.google?.accounts?.id) {
+      resolve();
+      return;
+    }
+    const existing = document.querySelector<HTMLScriptElement>('script[src="https://accounts.google.com/gsi/client"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error('Google Identity Services script failed to load')), { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Google Identity Services script failed to load'));
+    document.head.appendChild(script);
+  });
+}
+
+function serializeError(raw: unknown) {
+  if (raw instanceof Error) {
+    return {
+      name: raw.name,
+      message: raw.message,
+      stack: raw.stack,
+    };
+  }
+  return raw;
+}
+
 function makeError(area: AppError['area'], code: string, message: string, raw?: unknown): AppError {
-  return { id: crypto.randomUUID(), area, code, message, raw, timestamp: Date.now() };
+  return { id: crypto.randomUUID(), area, code, message, raw: serializeError(raw), timestamp: Date.now() };
 }
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('earbud');
-  const [view, setView] = useState<'setup' | 'live'>('setup');
+  const [view, setView] = useState<'auth' | 'setup' | 'live' | 'glossary'>('auth');
+  const [authMode, setAuthMode] = useState<'guest' | 'google' | null>(null);
+  const [authError, setAuthError] = useState('');
+  const [googleButtonReady, setGoogleButtonReady] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState('Abridge 실시간 통역 세션');
   const [status, setStatus] = useState<SessionStatus>('idle');
   const [theme] = useState<'dark' | 'light'>('dark');
@@ -69,6 +193,9 @@ export default function App() {
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [errors, setErrors] = useState<AppError[]>([]);
   const [glossary, setGlossary] = useState<GlossaryTerm[]>(DEFAULT_GLOSSARY);
+  const [glossarySuggestions, setGlossarySuggestions] = useState<GlossarySuggestion[]>([]);
+  const [selectedGlossaryId, setSelectedGlossaryId] = useState('');
+  const [glossaryDraft, setGlossaryDraft] = useState(emptyGlossaryDraft);
   const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
   const [marks, setMarks] = useState<LatencyMarks>({});
   const [isFinalCaption, setIsFinalCaption] = useState(false);
@@ -79,9 +206,18 @@ export default function App() {
   const [flipped, setFlipped] = useState(false);
   const [wakeLockState, setWakeLockState] = useState('미사용');
   const [online, setOnline] = useState(navigator.onLine);
+  const [boardMode, setBoardMode] = useState(false);
+  const [boardSwapped, setBoardSwapped] = useState(false);
+  const [boardFontScale, setBoardFontScale] = useState<keyof typeof boardFontSizes>(3);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const realtime = useRef<RealtimeClient | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const lastTranslationRequest = useRef('');
+  const lastConfirmedLang = useRef<Lang>('ko');
+  const activeSpeechLang = useRef<Lang>('ko');
+  const speechRestartTimer = useRef<number | undefined>(undefined);
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
+  const googleCredentialHandler = useRef<(response: GoogleCredentialResponse) => void>(() => undefined);
   const meetingStart = useRef(Date.now());
   const userStopped = useRef(false);
 
@@ -89,6 +225,39 @@ export default function App() {
   const speechSupported = providers.speech.isSupported();
   const ttsSupported = providers.tts.isSupported();
   const browserInfo = `${navigator.userAgent}`;
+  const selectedProvider = import.meta.env.VITE_TRANSLATION_PROVIDER ?? 'mock';
+  const micPermissionError = errors.find((error) => error.area === 'speech' && error.code === 'not-allowed');
+  const rememberedContext = useMemo(
+    () =>
+      meetings
+        .slice(0, 3)
+        .flatMap((meeting) => meeting.entries.slice(-6))
+        .flatMap((entry) => [entry.sourceText, entry.translatedText])
+        .filter(Boolean)
+        .slice(-18),
+    [meetings],
+  );
+  const liveDirection = decideDirection(sourceCaption || manualText, autoDetect, fixedLang, {
+    previousLang: lastConfirmedLang.current,
+    glossaryHints: glossary,
+  });
+  const koreanBoardText =
+    liveDirection.sourceLang === 'ko'
+      ? sourceCaption || '한국어 음성을 대기하고 있습니다. 말씀을 시작하면 즉시 통역 자막이 번역됩니다.'
+      : translationCaption || '한국어 번역 자막을 대기하고 있습니다. 일본어 발화가 들어오면 이곳에 표시됩니다.';
+  const japaneseBoardText =
+    liveDirection.sourceLang === 'ja'
+      ? sourceCaption || '日本語の音声を待機しています。お話しいただくと、すぐに翻訳字幕が表示されます。'
+      : translationCaption || '日本語の翻訳字幕を待機しています。韓国語の発話が入ると、ここに表示されます。';
+  const boardCaptions = boardSwapped
+    ? [
+        { lang: 'ja', className: 'target-board', pillClass: 'ja-pill', label: '🇯🇵 日本語 / JAPANESE', text: japaneseBoardText },
+        { lang: 'ko', className: 'source-board', pillClass: 'ko-pill', label: '🇰🇷 한국어 / KOREAN', text: koreanBoardText },
+      ]
+    : [
+        { lang: 'ko', className: 'source-board', pillClass: 'ko-pill', label: '🇰🇷 한국어 / KOREAN', text: koreanBoardText },
+        { lang: 'ja', className: 'target-board', pillClass: 'ja-pill', label: '🇯🇵 日本語 / JAPANESE', text: japaneseBoardText },
+      ];
 
   useEffect(() => {
     getGlossary().then(setGlossary).catch(() => setGlossary(DEFAULT_GLOSSARY));
@@ -113,12 +282,124 @@ export default function App() {
     );
   }, [glossary]);
 
+  useEffect(() => {
+    if (view !== 'live') return undefined;
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - meetingStart.current) / 1000)));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [view]);
+
+  useEffect(
+    () => () => {
+      if (speechRestartTimer.current) window.clearTimeout(speechRestartTimer.current);
+    },
+    [],
+  );
+
+  googleCredentialHandler.current = (response) => {
+    void finishGoogleSignIn(response);
+  };
+
+  useEffect(() => {
+    if (view !== 'auth' || !googleButtonRef.current) return undefined;
+    if (!googleClientId) {
+      setGoogleButtonReady(false);
+      setAuthError('Google Client ID가 설정되지 않았습니다. .env에 VITE_GOOGLE_CLIENT_ID를 추가해주세요.');
+      return undefined;
+    }
+
+    let active = true;
+    setGoogleButtonReady(false);
+    loadGoogleIdentityScript()
+      .then(() => {
+        if (!active || !googleButtonRef.current || !window.google?.accounts?.id) return;
+        window.google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: (response) => {
+            googleCredentialHandler.current(response);
+          },
+        });
+        googleButtonRef.current.innerHTML = '';
+        window.google.accounts.id.renderButton(googleButtonRef.current, {
+          theme: 'outline',
+          size: 'large',
+          text: 'continue_with',
+          shape: 'rectangular',
+          width: 390,
+          locale: 'ko',
+        });
+        setGoogleButtonReady(true);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setGoogleButtonReady(false);
+        setAuthError('Google 로그인 모듈을 불러오지 못했습니다. 네트워크 상태를 확인한 뒤 새로고침해주세요.');
+        setErrors((prev) => [makeError('app', 'google-script-load', 'Google 로그인 모듈 로딩 실패', error), ...prev]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [view]);
+
+  function oppositeLang(lang: Lang): Lang {
+    return lang === 'ja' ? 'ko' : 'ja';
+  }
+
+  function setListeningLanguage(lang: Lang, lock = true) {
+    setFixedLang(lang);
+    activeSpeechLang.current = lang;
+    if (lock) setAutoDetect(false);
+    if (view === 'live' && status !== 'idle' && status !== 'paused' && status !== 'mic-blocked') {
+      providers.speech.stop();
+      speechRestartTimer.current = window.setTimeout(() => startListening(lang), 220);
+    }
+  }
+
+  function useAutoLanguageDetection() {
+    setAutoDetect(true);
+    if (view === 'live' && status !== 'idle' && status !== 'paused' && status !== 'mic-blocked') {
+      providers.speech.stop();
+      speechRestartTimer.current = window.setTimeout(() => startListening(lastConfirmedLang.current), 220);
+    }
+  }
+
+  function queueSuggestedTerms(sourceText: string) {
+    for (const seed of beautySuggestionSeeds) {
+      if (!sourceText.includes(seed.source)) continue;
+      if (glossary.some((term) => term.source === seed.source)) continue;
+      setGlossarySuggestions((prev) => {
+        const existing = prev.find((term) => term.source === seed.source);
+        if (existing) {
+          return prev.map((term) =>
+            term.source === seed.source
+              ? { ...term, occurrences: term.occurrences + 1, example: sourceText }
+              : term,
+          );
+        }
+        return [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            ...seed,
+            occurrences: 1,
+            example: sourceText,
+          },
+        ];
+      });
+    }
+  }
+
   async function translateText(text: string, isFinal: boolean) {
     if (!shouldTranslateInterim(text, lastTranslationRequest.current) && !isFinal) return;
     lastTranslationRequest.current = text;
     abortRef.current?.abort();
     abortRef.current = new AbortController();
-    const direction = decideDirection(text, autoDetect, fixedLang);
+    const direction = decideDirection(text, autoDetect, fixedLang, {
+      previousLang: lastConfirmedLang.current,
+      glossaryHints: glossary,
+    });
     const requestMark = now();
     setMarks((prev) => ({ ...prev, firstTranslationRequest: prev.firstTranslationRequest ?? requestMark }));
     setStatus('translating');
@@ -128,7 +409,10 @@ export default function App() {
         ...direction,
         briefing,
         glossary,
-        recentContext: entries.slice(-4).flatMap((entry) => [entry.sourceText, entry.translatedText]),
+        recentContext: [
+          ...rememberedContext,
+          ...entries.slice(-4).flatMap((entry) => [entry.sourceText, entry.translatedText]),
+        ].slice(-20),
         isFinal,
         signal: abortRef.current.signal,
       });
@@ -158,6 +442,10 @@ export default function App() {
         }),
       };
       setEntries((prev) => [...prev.filter((old) => old.isFinal || isFinal), entry].slice(-80));
+      if (isFinal) {
+        lastConfirmedLang.current = direction.sourceLang;
+        queueSuggestedTerms(text);
+      }
       broadcastCaption(entry);
 
       if (voiceEnabled && translatedText.trim()) {
@@ -179,17 +467,37 @@ export default function App() {
   function handleSpeechText(text: string, isFinal: boolean) {
     const trimmed = text.trim();
     if (!trimmed) return;
+    const speechDirection = decideDirection(trimmed, autoDetect, fixedLang, {
+      previousLang: lastConfirmedLang.current,
+      glossaryHints: glossary,
+    });
     const firstCaption = marks.firstSourceCaption ?? now();
     setMarks((prev) => ({ ...prev, firstSourceCaption: prev.firstSourceCaption ?? firstCaption }));
     setSourceCaption(trimmed);
     setStatus(isFinal ? 'translating' : 'recognizing');
+    if (isFinal && speechDirection.confidence >= 0.45) {
+      lastConfirmedLang.current = speechDirection.sourceLang;
+    }
     window.setTimeout(() => translateText(trimmed, isFinal), isFinal ? 0 : 420);
   }
 
-  async function startListening() {
+  function submitManualTranslation() {
+    const trimmed = manualText.trim();
+    if (!trimmed) return;
+    const firstCaption = now();
+    setMarks({ micStart: firstCaption, firstSourceCaption: firstCaption });
+    setSourceCaption(trimmed);
+    setTranslationCaption('');
+    setIsFinalCaption(false);
+    void translateText(trimmed, true);
+  }
+
+  async function startListening(langOverride?: Lang) {
     userStopped.current = false;
     setMarks({ micStart: now() });
     setStatus('listening');
+    const listeningLang = langOverride ?? (autoDetect ? activeSpeechLang.current : fixedLang);
+    activeSpeechLang.current = listeningLang;
     if (!speechSupported) {
       setErrors((prev) => [
         makeError('speech', 'unsupported', '이 브라우저는 음성인식을 지원하지 않습니다. 텍스트 입력으로 데모를 확인하세요.'),
@@ -198,24 +506,32 @@ export default function App() {
       return;
     }
     await providers.speech.start({
-      lang: fixedLang,
+      lang: listeningLang,
       interimResults: true,
       onResult: (chunk) => handleSpeechText(chunk.text, chunk.isFinal),
       onError: (error) => {
         setErrors((prev) => [error, ...prev]);
-        setStatus(error.code === 'no-speech' ? 'listening' : 'error');
+        if (autoDetect && (mode === 'earbud' || mode === 'table' || mode === 'auto') && error.code === 'no-speech') {
+          activeSpeechLang.current = oppositeLang(activeSpeechLang.current);
+        }
+        setStatus(error.code === 'not-allowed' ? 'mic-blocked' : error.code === 'no-speech' ? 'listening' : 'error');
       },
       onEnd: () => {
-        if (!userStopped.current && mode === 'auto') {
-          window.setTimeout(() => startListening(), 800);
+        if (!userStopped.current && (mode === 'auto' || autoDetect)) {
+          speechRestartTimer.current = window.setTimeout(
+            () => startListening(activeSpeechLang.current),
+            autoDetect ? 420 : 800,
+          );
         } else {
-          setStatus((prev) => (prev === 'paused' ? prev : 'idle'));
+          setStatus((prev) => (prev === 'paused' || prev === 'mic-blocked' || prev === 'error' ? prev : 'idle'));
         }
       },
     });
   }
 
   function startMeetingSession() {
+    meetingStart.current = Date.now();
+    setElapsedSeconds(0);
     setView('live');
     void startListening();
   }
@@ -226,6 +542,75 @@ export default function App() {
     providers.tts.stop();
     abortRef.current?.abort();
     setStatus('idle');
+  }
+
+  async function requestLoginMicrophoneAccess() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setAuthError('이 브라우저에서는 마이크 권한 요청을 사용할 수 없습니다. Chrome에서 다시 시도해주세요.');
+      return false;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      setAuthError('');
+      return true;
+    } catch (error) {
+      setAuthError('마이크 권한을 허용해야 Google 계정으로 시작할 수 있습니다. 브라우저 권한에서 마이크를 허용한 뒤 다시 시도해주세요.');
+      setErrors((prev) => [makeError('speech', 'login-mic-denied', '로그인 전 마이크 권한 요청이 거부되었습니다.', error), ...prev]);
+      return false;
+    }
+  }
+
+  async function finishGoogleSignIn(response: GoogleCredentialResponse) {
+    if (!response.credential) {
+      setAuthError('Google 로그인 응답을 확인하지 못했습니다. 다시 시도해주세요.');
+      return;
+    }
+    const allowed = await requestLoginMicrophoneAccess();
+    if (!allowed) return;
+    setAuthMode('google');
+    setView('setup');
+  }
+
+  function startWithGoogle() {
+    setAuthError(googleButtonReady ? 'Google 버튼을 눌러 계정을 선택해주세요.' : 'Google 로그인 모듈을 준비하는 중입니다. 잠시 후 다시 시도해주세요.');
+  }
+
+  function startAsGuest() {
+    setAuthMode('guest');
+    setAuthError('');
+    setView('setup');
+  }
+
+  function exitToAuth() {
+    stopListening();
+    setBoardMode(false);
+    setView('auth');
+    setAuthMode(null);
+  }
+
+  function exitLivePage() {
+    stopListening();
+    setBoardMode(false);
+    setView('setup');
+  }
+
+  function enterBoardMode() {
+    setBoardMode(true);
+    document.documentElement.requestFullscreen?.().catch(() => undefined);
+  }
+
+  function exitBoardMode() {
+    setBoardMode(false);
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => undefined);
+    }
+  }
+
+  function formatElapsed(seconds: number) {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
   }
 
   async function saveCurrentMeeting() {
@@ -242,6 +627,78 @@ export default function App() {
     };
     await saveMeeting(record);
     setMeetings(await listMeetings());
+  }
+
+  function selectGlossaryTerm(term: GlossaryTerm) {
+    setSelectedGlossaryId(term.id);
+    setGlossaryDraft({
+      source: term.source,
+      target: term.target,
+      note: term.note ?? '',
+    });
+  }
+
+  function resetGlossaryDraft() {
+    setSelectedGlossaryId('');
+    setGlossaryDraft(emptyGlossaryDraft);
+  }
+
+  function saveGlossaryDraft() {
+    const source = glossaryDraft.source.trim();
+    const target = glossaryDraft.target.trim();
+    const note = glossaryDraft.note.trim();
+    if (!source || !target) {
+      setErrors((prev) => [
+        makeError('app', 'glossary-required', '원어와 번역어를 모두 입력해야 합니다.'),
+        ...prev,
+      ]);
+      return;
+    }
+
+    if (selectedGlossaryId) {
+      setGlossary((prev) =>
+        prev.map((term) =>
+          term.id === selectedGlossaryId ? { ...term, source, target, note: note || undefined } : term,
+        ),
+      );
+      return;
+    }
+
+    setGlossary((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        source,
+        target,
+        note: note || undefined,
+      },
+    ]);
+    resetGlossaryDraft();
+  }
+
+  function removeSelectedGlossaryTerm() {
+    if (!selectedGlossaryId) return;
+    setGlossary((prev) => prev.filter((term) => term.id !== selectedGlossaryId));
+    resetGlossaryDraft();
+  }
+
+  function acceptGlossarySuggestion(suggestion: GlossarySuggestion) {
+    if (!glossary.some((term) => term.source === suggestion.source)) {
+      setGlossary((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          source: suggestion.source,
+          target: suggestion.target,
+          note: suggestion.note,
+        },
+      ]);
+    }
+    setGlossarySuggestions((prev) => prev.filter((term) => term.id !== suggestion.id));
+  }
+
+  function ignoreGlossarySuggestion(id: string) {
+    setGlossarySuggestions((prev) => prev.filter((term) => term.id !== id));
   }
 
   function exportText(kind: 'json' | 'txt') {
@@ -274,7 +731,7 @@ export default function App() {
   function connectRealtime() {
     if (realtime.current) return;
     const client = new RealtimeClient(
-      'ws://127.0.0.1:8788',
+      realtimeEndpoint,
       (message) => handleRealtimeMessage(message),
       setWsStatus,
       (error) => setErrors((prev) => [makeError('websocket', 'ws-error', '행사 서버 연결 오류', error), ...prev]),
@@ -283,10 +740,17 @@ export default function App() {
     client.connect();
   }
 
+  function setEventSessionCode(nextSessionCode: string) {
+    const normalizedCode = nextSessionCode.toUpperCase();
+    setSessionCode(normalizedCode);
+    QRCode.toDataURL(`${location.origin}?session=${normalizedCode}`, { margin: 1, width: 320 })
+      .then(setQr)
+      .catch(() => undefined);
+  }
+
   function handleRealtimeMessage(message: EventMessage) {
     if (message.type === 'session-created' && message.sessionCode) {
-      setSessionCode(message.sessionCode);
-      QRCode.toDataURL(`${location.origin}?session=${message.sessionCode}`).then(setQr).catch(() => undefined);
+      setEventSessionCode(message.sessionCode);
     }
     if (message.type === 'caption' && message.text && message.translatedText) {
       setSourceCaption(message.text);
@@ -295,8 +759,10 @@ export default function App() {
   }
 
   function createEventSession() {
+    const nextSessionCode = makeLocalSessionCode();
+    setEventSessionCode(nextSessionCode);
     connectRealtime();
-    window.setTimeout(() => realtime.current?.send({ type: 'create-session' } as EventMessage), 150);
+    window.setTimeout(() => realtime.current?.send({ type: 'create-session', sessionCode: nextSessionCode } as EventMessage), 150);
   }
 
   function joinEventSession() {
@@ -325,6 +791,13 @@ export default function App() {
     icon: typeof Ear;
   }> = [
     {
+      id: 'auto',
+      title: '세미나 모드',
+      badge: 'SEMINAR',
+      body: '별도 조작 없이 대화를 계속 듣고, 짧은 문장을 빠르게 잘라서 통역',
+      icon: Sparkles,
+    },
+    {
       id: 'earbud',
       title: '개인 통역 모드',
       badge: 'EARBUDS',
@@ -333,17 +806,10 @@ export default function App() {
     },
     {
       id: 'table',
-      title: '태블릿 테이블 모드',
-      badge: 'TABLET',
-      body: '테이블 가운데 두고 다수가 함께 큰 글씨 원문/번역 자막 대화창 누적 모드',
+      title: '회의 모드',
+      badge: 'TABLE MEETING',
+      body: '태블릿 테이블 모드처럼 테이블 가운데 두고 다수가 함께 큰 글씨 원문/번역 자막을 보는 회의 모드',
       icon: Tablet,
-    },
-    {
-      id: 'auto',
-      title: '세미나 모드',
-      badge: 'SEMINAR',
-      body: '별도 조작 없이 대화를 계속 듣고, 짧은 문장을 빠르게 잘라서 통역',
-      icon: Sparkles,
     },
     {
       id: 'event',
@@ -353,6 +819,389 @@ export default function App() {
       icon: Users,
     },
   ];
+
+  if (view === 'auth') {
+    return (
+      <main className="auth-screen">
+        <section className="auth-card" aria-label="시작 방식 선택">
+          <div className="auth-logo">
+            <Globe />
+          </div>
+          <h1>
+            ho_ya&apos;s Talk-Talk <span>PRO</span>
+          </h1>
+          <p className="auth-copy">글로벌 미용 전문 통역시스템</p>
+
+          <div className="auth-actions">
+            <div className="google-login-slot">
+              <div ref={googleButtonRef} className="google-official-button" />
+              {!googleButtonReady && (
+                <button className="google-login-button" onClick={startWithGoogle}>
+                  <span className="google-mark" aria-hidden="true">G</span>
+                  Google 계정으로 시작하기
+                </button>
+              )}
+            </div>
+            <button className="guest-login-button" onClick={startAsGuest}>
+              <User /> 게스트 모드로 즉시 시작하기
+            </button>
+          </div>
+
+          {authError && <p className="auth-error">{authError}</p>}
+          <p className="auth-footnote">© 2026 Abridge AI. Secure, sandbox environment.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (view === 'glossary') {
+    const selectedTerm = glossary.find((term) => term.id === selectedGlossaryId);
+
+    return (
+      <main className="app glossary-page">
+        <header className="brand-bar glossary-brand">
+          <button className="back-button" onClick={() => setView('setup')}>
+            <ArrowLeft /> 설정으로
+          </button>
+          <div className="live-title">
+            <strong>전문 용어 사전</strong>
+            <span>현재 등록된 특수 용어 {glossary.length}개</span>
+          </div>
+          <button className="secondary-button" onClick={resetGlossaryDraft}>
+            <Eraser /> 새 용어
+          </button>
+        </header>
+
+        <section className="glossary-manager">
+          <section className="setup-card glossary-list-panel">
+            <div className="section-heading">
+              <h2>등록된 용어</h2>
+              <span className="count-badge">{glossary.length}개</span>
+            </div>
+            <div className="glossary-list" aria-label="등록된 전문 용어 목록">
+              {glossary.length === 0 ? (
+                <div className="empty-archive">
+                  <BookOpen />
+                  <strong>아직 등록된 용어가 없습니다.</strong>
+                  <span>오른쪽 입력창에서 자주 쓰는 원어와 번역어를 등록하세요.</span>
+                </div>
+              ) : (
+                glossary.map((term) => (
+                  <button
+                    key={term.id}
+                    className={term.id === selectedGlossaryId ? 'selected' : ''}
+                    onClick={() => selectGlossaryTerm(term)}
+                  >
+                    <span>{term.source}</span>
+                    <strong>{term.target}</strong>
+                    {term.note && <small>{term.note}</small>}
+                  </button>
+                ))
+              )}
+            </div>
+
+            <div className="suggestion-panel">
+              <div className="section-heading">
+                <h2>추천 용어 후보</h2>
+                <span className="count-badge">{glossarySuggestions.length}개</span>
+              </div>
+              {glossarySuggestions.length === 0 ? (
+                <p className="muted">회의 중 발견한 미용 업계 용어 후보가 이곳에 쌓입니다.</p>
+              ) : (
+                <div className="suggestion-list">
+                  {glossarySuggestions.map((suggestion) => (
+                    <article key={suggestion.id}>
+                      <div>
+                        <strong>{suggestion.source}</strong>
+                        <span>{suggestion.target}</span>
+                        <small>{suggestion.note} · {suggestion.occurrences}회 감지</small>
+                      </div>
+                      <div>
+                        <button onClick={() => acceptGlossarySuggestion(suggestion)}><Check /> 사전에 추가</button>
+                        <button onClick={() => ignoreGlossarySuggestion(suggestion.id)}><Eraser /> 무시</button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="setup-card glossary-editor-panel">
+            <div className="section-heading">
+              <h2>{selectedTerm ? '용어 수정' : '용어 등록'}</h2>
+              {selectedTerm && <span className="count-badge">선택됨</span>}
+            </div>
+
+            <label className="field-label">원어</label>
+            <input
+              value={glossaryDraft.source}
+              onChange={(event) => setGlossaryDraft((prev) => ({ ...prev, source: event.target.value }))}
+              placeholder="예: 커트"
+            />
+
+            <label className="field-label">번역어</label>
+            <input
+              value={glossaryDraft.target}
+              onChange={(event) => setGlossaryDraft((prev) => ({ ...prev, target: event.target.value }))}
+              placeholder="예: カット"
+            />
+
+            <label className="field-label">메모</label>
+            <textarea
+              value={glossaryDraft.note}
+              onChange={(event) => setGlossaryDraft((prev) => ({ ...prev, note: event.target.value }))}
+              placeholder="상황, 발음, 사용처 등을 적어둘 수 있습니다."
+            />
+
+            <div className="glossary-actions">
+              <button onClick={saveGlossaryDraft}>
+                {selectedTerm ? <Save /> : <Check />}
+                {selectedTerm ? '용어 수정' : '용어 등록'}
+              </button>
+              <button onClick={removeSelectedGlossaryTerm} disabled={!selectedTerm}>
+                <Trash2 /> 용어 제거
+              </button>
+              <button onClick={resetGlossaryDraft}>
+                <Eraser /> 입력 초기화
+              </button>
+            </div>
+          </section>
+        </section>
+      </main>
+    );
+  }
+
+  if (view === 'live') {
+    if (boardMode) {
+      return (
+        <main
+          className="app broadcast-board"
+          style={{ '--board-caption-font-size': boardFontSizes[boardFontScale] } as CSSProperties}
+        >
+          <header className="board-header">
+            <div className="board-title">
+              <div className="board-icon"><Tablet /></div>
+              <div>
+                <span>실시간 세미나 양방향 자막 중계보드</span>
+                <strong>{meetingTitle || 'Abridge 실시간 통역 세션'}</strong>
+              </div>
+            </div>
+
+            <div className="board-controls" aria-label="전체화면 통역 설정">
+              <button
+                className={autoDetect ? 'active' : ''}
+                onClick={useAutoLanguageDetection}
+              >
+                <Globe /> 자동 언어 감지
+              </button>
+              <div className="board-language-switch" aria-label="발화 언어 선택">
+                <button
+                  className={!autoDetect && fixedLang === 'ko' ? 'active ko' : 'ko'}
+                  onClick={() => setListeningLanguage('ko')}
+                >
+                  🇰🇷 한국어
+                </button>
+                <button
+                  className={!autoDetect && fixedLang === 'ja' ? 'active ja' : 'ja'}
+                  onClick={() => setListeningLanguage('ja')}
+                >
+                  🇯🇵 日本語
+                </button>
+              </div>
+              <button onClick={() => setBoardSwapped((value) => !value)}>
+                <SwitchCamera /> 좌우 전환
+              </button>
+              <div className="board-font-switch" aria-label="자막 글자 크기">
+                <span>글자</span>
+                {([1, 2, 3, 4, 5] as const).map((level) => (
+                  <button
+                    key={level}
+                    className={boardFontScale === level ? 'active' : ''}
+                    onClick={() => setBoardFontScale(level)}
+                    aria-pressed={boardFontScale === level}
+                  >
+                    {level}
+                  </button>
+                ))}
+              </div>
+              <span className="board-live-state">
+                <span />
+                {autoDetect ? '자동 감지 중' : `${LANG_LABELS[fixedLang]} 발화 수신 중`}
+              </span>
+              <button className="board-exit" onClick={exitBoardMode}>
+                <Minimize2 /> 전체화면 종료
+              </button>
+              <button className="board-exit" onClick={exitToAuth}>
+                <LogOut /> 나가기
+              </button>
+            </div>
+          </header>
+
+          <section className="board-stage" aria-label="전체화면 번역 자막">
+            {boardCaptions.map((caption) => (
+              <article key={caption.lang} className={`board-caption ${caption.className}`}>
+                <div className={`board-pill ${caption.pillClass}`}>{caption.label}</div>
+                <p>{caption.text}</p>
+              </article>
+            ))}
+          </section>
+
+          <footer className="board-footer">
+            <span>경과 시간: <strong>{formatElapsed(elapsedSeconds)}</strong></span>
+            <span>중계 모드: {currentMode.label} / 대형 자막 실시간 중계 대시보드</span>
+            <span>PREMIUM REAL-TIME TRANSLATOR ENGINE</span>
+          </footer>
+        </main>
+      );
+    }
+
+    return (
+      <main className={`app live-page ${flipped ? 'flipped' : ''}`}>
+        <header className="brand-bar live-brand">
+          <button className="back-button" onClick={exitLivePage}>
+            <ArrowLeft /> 설정으로
+          </button>
+          <div className="live-title">
+            <strong>{meetingTitle || 'Abridge 실시간 통역 세션'}</strong>
+            <span>{currentMode.label} 모드 · {selectedProvider === 'mock' ? '로컬 데모 번역' : selectedProvider.toUpperCase()}</span>
+          </div>
+          <button className="danger-button" onClick={exitLivePage}>
+            <Square /> 종료
+          </button>
+        </header>
+
+        <section className="live-shell">
+          <button className="launch-button live-launch" onClick={() => startListening()}>
+            <Play /> 실시간 AI 통역 미팅 개시 <Send />
+          </button>
+
+          <section className="live-console live-console-full">
+            <div className="console-toolbar">
+              <span className={`status ${latency.delayed ? 'warn' : ''}`}>{statusLabel[status]}</span>
+              <div className="quick-language-controls" aria-label="빠른 발화 언어 선택">
+                <button className={autoDetect ? 'active' : ''} onClick={useAutoLanguageDetection}>
+                  <Globe /> 자동 감지
+                </button>
+                <button className={!autoDetect && fixedLang === 'ko' ? 'active ko' : 'ko'} onClick={() => setListeningLanguage('ko')}>
+                  🇰🇷 한국어 고정
+                </button>
+                <button className={!autoDetect && fixedLang === 'ja' ? 'active ja' : 'ja'} onClick={() => setListeningLanguage('ja')}>
+                  🇯🇵 日本語 고정
+                </button>
+              </div>
+              <label><input type="checkbox" checked={voiceEnabled} onChange={(e) => setVoiceEnabled(e.target.checked)} /> 음성 합성</label>
+              <button onClick={enterBoardMode}><Maximize2 /> 전체화면 보드</button>
+              <button onClick={() => setStatus('paused')}><Pause /> 일시정지</button>
+              <button onClick={saveCurrentMeeting}><Save /> 기록 저장</button>
+              <button onClick={exitLivePage}><Square /> 종료</button>
+            </div>
+
+            {selectedProvider === 'mock' && (
+              <div className="provider-warning">
+                현재는 API 키 없이 동작하는 로컬 데모 번역입니다. 실제 Gemini 번역은 `.env`에 `VITE_TRANSLATION_PROVIDER=gemini`, `TRANSLATION_PROVIDER=gemini`, `GEMINI_API_KEY`를 설정한 뒤 서버를 다시 켜야 합니다.
+              </div>
+            )}
+
+            {micPermissionError && (
+              <div className="provider-warning mic-warning">
+                마이크 권한이 차단되어 음성 인식이 시작되지 않았습니다. 주소창의 권한 설정에서 마이크를 허용하거나, 아래 텍스트 입력으로 번역을 테스트하세요.
+              </div>
+            )}
+
+            <form
+              className="manual"
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitManualTranslation();
+              }}
+            >
+              <input value={manualText} onChange={(e) => setManualText(e.target.value)} placeholder="오류 확인용 텍스트 대체 입력" />
+              <button type="submit"><Send /> 번역</button>
+            </form>
+
+            <section className={`caption-stage ${mode}`}>
+              <div className="caption source">
+                <span>{LANG_LABELS[decideDirection(sourceCaption || manualText, autoDetect, fixedLang).sourceLang]}</span>
+                <p>{sourceCaption || '통역 화면에서 마이크 사용 허용을 누르면 바로 대화 인식을 시작합니다.'}</p>
+              </div>
+              <div className={`caption translated ${isFinalCaption ? 'final' : 'interim'}`}>
+                <span>{LANG_LABELS[decideDirection(sourceCaption || manualText, autoDetect, fixedLang).targetLang]} {isFinalCaption ? '최종' : '중간'}</span>
+                <p>{translationCaption || '텍스트를 입력하거나 마이크로 말하면 번역 결과가 여기에 표시됩니다.'}</p>
+              </div>
+              <div className="log" aria-label="conversation log">
+                {entries.map((entry) => (
+                  <article key={entry.id} className={entry.isFinal ? 'done' : 'live'}>
+                    <small>{new Date(entry.createdAt).toLocaleTimeString()} · {entry.latency.totalMs ? Math.round(entry.latency.totalMs) : '-'}ms</small>
+                    <p>{entry.sourceText}</p>
+                    <strong>{entry.translatedText}</strong>
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            {mode === 'table' && (
+              <div className="primary-actions">
+                <button onClick={() => document.documentElement.requestFullscreen?.()}><Tablet /> 전체화면</button>
+                <button onClick={() => setFlipped((value) => !value)}><RotateCcw /> 180도</button>
+                <button onClick={requestWakeLock}><Moon /> {wakeLockState}</button>
+              </div>
+            )}
+
+            {mode === 'event' && (
+              <div className="event-box">
+                <button onClick={createEventSession}><QrCode /> 세션 생성</button>
+                <div className="event-session-card">
+                  {qr ? (
+                    <img src={qr} alt="session qr" />
+                  ) : (
+                    <span className="event-qr-placeholder"><QrCode /></span>
+                  )}
+                  <div>
+                    <strong>{sessionCode || '세션 코드 없음'}</strong>
+                    <small>{sessionCode ? `${location.origin}?session=${sessionCode}` : '세션 생성 버튼을 누르면 참석자용 QR이 표시됩니다.'}</small>
+                  </div>
+                </div>
+                <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="참석자 코드 입력" />
+                <button onClick={joinEventSession}><Users /> 참석자 연결</button>
+              </div>
+            )}
+          </section>
+
+          <aside className="live-diagnostics diagnostics compact-diagnostics">
+            <h2>오류/성능 진단</h2>
+            <dl>
+              <div><dt>STT</dt><dd>{latency.sttMs ? `${Math.round(latency.sttMs)}ms` : '-'}</dd></div>
+              <div><dt>번역</dt><dd>{latency.translationMs ? `${Math.round(latency.translationMs)}ms` : '-'}</dd></div>
+              <div><dt>전체</dt><dd>{latency.totalMs ? `${Math.round(latency.totalMs)}ms` : '-'}</dd></div>
+              <div><dt>Provider</dt><dd>{providers.translation.name}</dd></div>
+              <div><dt>설정</dt><dd>{selectedProvider}</dd></div>
+              <div><dt>STT 지원</dt><dd>{speechSupported ? '지원' : '미지원'}</dd></div>
+            </dl>
+            <details>
+              <summary>최근 오류와 브라우저 정보</summary>
+              <pre>{JSON.stringify({ browserInfo, online, ttsSupported, errors: errors.slice(0, 8) }, null, 2)}</pre>
+            </details>
+            <div className="live-archive">
+              <h2>저장된 기록</h2>
+              {meetings.length === 0 ? (
+                <p className="muted">아직 저장된 기록이 없습니다.</p>
+              ) : (
+                <div className="archive-list">
+                  {meetings.slice(0, 3).map((meeting) => (
+                    <article key={meeting.id}>
+                      <strong>{meeting.title}</strong>
+                      <span>{new Date(meeting.startedAt).toLocaleString()} · {meeting.entries.length}개 문장</span>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          </aside>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className={`app setup-shell ${flipped ? 'flipped' : ''}`}>
@@ -368,9 +1217,9 @@ export default function App() {
         </div>
         <div className="brand-user">
           <span>
-            <User /> 게스트 사용자
+            <User /> {authMode === 'google' ? 'Google 사용자' : '게스트 사용자'}
           </span>
-          <button aria-label="logout placeholder">
+          <button onClick={exitToAuth} aria-label="나가기">
             <LogOut />
           </button>
         </div>
@@ -449,7 +1298,7 @@ export default function App() {
                 <p>현재 등록된 특수 용어: <strong>{glossary.length}개</strong></p>
               </div>
             </div>
-            <button onClick={() => setGlossary((prev) => [...prev, { id: crypto.randomUUID(), source: '', target: '' }])}>
+            <button onClick={() => setView('glossary')}>
               용어 사전 관리하기
             </button>
           </section>
@@ -457,68 +1306,6 @@ export default function App() {
           <button className="launch-button" onClick={startMeetingSession}>
             <Play /> 실시간 AI 통역 미팅 개시 <Send />
           </button>
-
-          {view === 'live' && (
-          <section className="live-console">
-            <div className="console-toolbar">
-              <span className={`status ${latency.delayed ? 'warn' : ''}`}>{statusLabel[status]}</span>
-              <label><input type="checkbox" checked={autoDetect} onChange={(e) => setAutoDetect(e.target.checked)} /> 자동 언어 감지</label>
-              <label><input type="checkbox" checked={voiceEnabled} onChange={(e) => setVoiceEnabled(e.target.checked)} /> 음성 합성</label>
-              <button onClick={() => setStatus('paused')}><Pause /> 일시정지</button>
-              <button onClick={stopListening}><Square /> 종료</button>
-            </div>
-
-            <form
-              className="manual"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setMarks({ micStart: now(), firstSourceCaption: now() });
-                handleSpeechText(manualText, true);
-              }}
-            >
-              <input value={manualText} onChange={(e) => setManualText(e.target.value)} placeholder="오류 확인용 텍스트 대체 입력" />
-              <button type="submit"><Send /> 번역</button>
-            </form>
-
-            <section className={`caption-stage ${mode}`}>
-              <div className="caption source">
-                <span>{LANG_LABELS[decideDirection(sourceCaption || manualText, autoDetect, fixedLang).sourceLang]}</span>
-                <p>{sourceCaption || '통역 화면에서 마이크 사용 허용을 누르면 바로 대화 인식을 시작합니다.'}</p>
-              </div>
-              <div className={`caption translated ${isFinalCaption ? 'final' : 'interim'}`}>
-                <span>{LANG_LABELS[decideDirection(sourceCaption || manualText, autoDetect, fixedLang).targetLang]} {isFinalCaption ? '최종' : '중간'}</span>
-                <p>{translationCaption || '브라우저가 STT를 지원하지 않으면 이 텍스트 입력으로 흐름을 테스트하세요.'}</p>
-              </div>
-              <div className="log" aria-label="conversation log">
-                {entries.map((entry) => (
-                  <article key={entry.id} className={entry.isFinal ? 'done' : 'live'}>
-                    <small>{new Date(entry.createdAt).toLocaleTimeString()} · {entry.latency.totalMs ? Math.round(entry.latency.totalMs) : '-'}ms</small>
-                    <p>{entry.sourceText}</p>
-                    <strong>{entry.translatedText}</strong>
-                  </article>
-                ))}
-              </div>
-            </section>
-
-            {mode === 'table' && (
-              <div className="primary-actions">
-                <button onClick={() => document.documentElement.requestFullscreen?.()}><Tablet /> 전체화면</button>
-                <button onClick={() => setFlipped((value) => !value)}><RotateCcw /> 180도</button>
-                <button onClick={requestWakeLock}><Moon /> {wakeLockState}</button>
-              </div>
-            )}
-
-            {mode === 'event' && (
-              <div className="event-box">
-                <button onClick={createEventSession}><QrCode /> 세션 생성</button>
-                <strong>{sessionCode || '세션 코드 없음'}</strong>
-                {qr && <img src={qr} alt="session qr" />}
-                <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="참석자 코드 입력" />
-                <button onClick={joinEventSession}><Users /> 참석자 연결</button>
-              </div>
-            )}
-          </section>
-          )}
         </div>
 
         <aside className="setup-aside">

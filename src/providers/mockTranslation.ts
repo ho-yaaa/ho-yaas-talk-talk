@@ -4,6 +4,11 @@ import type { TranslationProvider, TranslationRequest } from './interfaces';
 const koToJa = new Map([
   ['안녕하세요', 'こんにちは'],
   ['감사합니다', 'ありがとうございます'],
+  ['뭐라고 말한 말', '何と言った言葉'],
+  ['뭐라고 말한', '何と言った'],
+  ['뭐라고', '何と'],
+  ['말한 말', '言った言葉'],
+  ['말', '言葉'],
   ['오늘', '本日'],
   ['회의', 'ミーティング'],
   ['일정', '日程'],
@@ -12,6 +17,10 @@ const koToJa = new Map([
   ['논의', '相談'],
   ['좋습니다', 'いいですね'],
   ['확인', '確認'],
+  ['테스트', 'テスト'],
+  ['통역', '通訳'],
+  ['번역', '翻訳'],
+  ['미팅', 'ミーティング'],
 ]);
 
 const jaToKo = new Map([
@@ -24,6 +33,10 @@ const jaToKo = new Map([
   ['釜山', '부산'],
   ['相談', '논의'],
   ['確認', '확인'],
+  ['テスト', '테스트'],
+  ['通訳', '통역'],
+  ['翻訳', '번역'],
+  ['言葉', '말'],
 ]);
 
 export class MockTranslationProvider implements TranslationProvider {
@@ -50,10 +63,7 @@ export class MockTranslationProvider implements TranslationProvider {
     });
 
     if (translated === request.text) {
-      translated =
-        request.targetLang === 'ja'
-          ? `【デモ翻訳】${glossaryApplied}`
-          : `[데모 번역] ${glossaryApplied}`;
+      translated = request.targetLang === 'ja' ? `${glossaryApplied}（ローカル訳）` : `${glossaryApplied} (로컬 번역)`;
     }
     return request.isFinal ? translated : `${translated}`;
   }

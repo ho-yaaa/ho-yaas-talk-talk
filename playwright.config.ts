@@ -7,13 +7,13 @@ export default defineConfig({
   webServer: [
     {
       command:
-        'PATH=/Users/_ho_yaaa_/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH ./node_modules/.bin/vite --host 127.0.0.1 --port 4173',
+        'PATH=/Users/_ho_yaaa_/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH VITE_TRANSLATION_PROVIDER=mock ./node_modules/.bin/vite --host 127.0.0.1 --port 4173',
       url: 'http://127.0.0.1:4173',
       reuseExistingServer: true,
     },
     {
       command:
-        'PATH=/Users/_ho_yaaa_/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH ./node_modules/.bin/tsx server/realtime-server.ts',
+        'PATH=/Users/_ho_yaaa_/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH PORT=8788 ./node_modules/.bin/tsx server/realtime-server.ts',
       url: 'http://127.0.0.1:8788/health',
       reuseExistingServer: true,
     },

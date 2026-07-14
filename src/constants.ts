@@ -9,7 +9,7 @@ export const LANG_LABELS: Record<Lang, string> = {
 
 export const MODES: Array<{ id: Mode; label: string; description: string }> = [
   { id: 'earbud', label: '이어폰', description: '두 사람이 한 기기와 이어폰 한 쌍으로 사용' },
-  { id: 'table', label: '테이블', description: '큰 자막을 함께 보는 회의/식사 자리' },
+  { id: 'table', label: '회의', description: '큰 자막을 함께 보는 회의/식사 자리' },
   { id: 'auto', label: '자동', description: '켜둔 상태로 지속 듣기와 중간 번역' },
   { id: 'event', label: '행사', description: '발표자와 참석자 로컬 WebSocket 데모' },
 ];

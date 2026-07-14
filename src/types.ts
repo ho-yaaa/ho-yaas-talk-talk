@@ -7,6 +7,7 @@ export type SessionStatus =
   | 'translating'
   | 'speaking'
   | 'paused'
+  | 'mic-blocked'
   | 'error';
 
 export interface GlossaryTerm {
@@ -14,6 +15,11 @@ export interface GlossaryTerm {
   source: string;
   target: string;
   note?: string;
+}
+
+export interface GlossarySuggestion extends GlossaryTerm {
+  occurrences: number;
+  example?: string;
 }
 
 export interface TranscriptEntry {

@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: ho-yaas-talk-talk
+    env: node
+    plan: free
+    buildCommand: pnpm install --frozen-lockfile && pnpm run build
+    startCommand: pnpm start
+    healthCheckPath: /health
+    envVars:
+      - key: TRANSLATION_PROVIDER
+        value: gemini
+      - key: VITE_TRANSLATION_PROVIDER
+        value: gemini
+      - key: VITE_TRANSLATION_API_URL
+        value: /api/translate
+      - key: GEMINI_TRANSLATION_MODEL
+        value: gemini-3.5-flash
+      - key: VITE_GOOGLE_CLIENT_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

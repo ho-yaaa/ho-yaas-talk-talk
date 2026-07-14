@@ -8,6 +8,7 @@
     "server": "tsx server/realtime-server.ts",
     "dev:all": "concurrently -k -n app,ws -c cyan,magenta \"pnpm dev\" \"pnpm server\"",
     "build": "tsc -b && vite build",
+    "start": "tsx server/realtime-server.ts",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
     "test:watch": "vitest",
