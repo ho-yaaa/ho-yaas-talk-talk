@@ -1437,6 +1437,15 @@ button:disabled {
   padding: clamp(8px, 2vh, 18px) clamp(6px, 1.2vw, 18px) clamp(24px, 5vh, 56px);
 }
 
+.board-latest-window {
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid rgba(71, 85, 105, 0.32);
+  border-radius: 24px;
+  background: rgba(15, 23, 42, 0.42);
+  padding: clamp(26px, 4vw, 58px);
+}
+
 .board-seminar-lines section {
   display: grid;
   gap: clamp(10px, 1.8vh, 22px);
@@ -1463,11 +1472,18 @@ button:disabled {
   -webkit-box-orient: initial;
 }
 
+.board-latest-window p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .seminar-board-caption .board-source-line {
   color: rgba(226, 232, 240, 0.82);
   font-size: calc(var(--board-caption-font-size) * 0.854);
   line-height: 1.18;
   font-weight: 650;
+  -webkit-line-clamp: 2;
 }
 
 .seminar-board-caption .board-translation-line {
@@ -1475,6 +1491,7 @@ button:disabled {
   font-size: calc(var(--board-caption-font-size) * 1.22);
   line-height: 1.05;
   font-weight: 920;
+  -webkit-line-clamp: 3;
 }
 
 .seminar-board-caption .board-seminar-placeholder {

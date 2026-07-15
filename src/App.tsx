@@ -285,6 +285,7 @@ export default function App() {
   const lastConfirmedLang = useRef<Lang>('ko');
   const activeSpeechLang = useRef<Lang>('ko');
   const speechRestartTimer = useRef<number | undefined>(undefined);
+  const seminarTranslateTimer = useRef<number | undefined>(undefined);
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
   const googleCredentialHandler = useRef<(response: GoogleCredentialResponse) => void>(() => undefined);
   const speakerVoiceGenderRef = useRef<VoiceGender>('neutral');
@@ -332,6 +333,9 @@ export default function App() {
         { lang: 'ja', className: 'target-board', pillClass: 'ja-pill', label: '🇯🇵 日本語 / JAPANESE', text: japaneseBoardText },
       ];
   const seminarEntries = entries.filter((entry) => entry.mode === 'auto').slice(-20);
+  const latestSeminarEntry = seminarEntries.at(-1);
+  const latestSeminarSource = latestSeminarEntry?.sourceText || sourceCaption;
+  const latestSeminarTranslation = latestSeminarEntry?.translatedText || translationCaption;
 
   useEffect(() => {
     if (mode !== 'auto') return;
@@ -393,6 +397,7 @@ export default function App() {
   useEffect(
     () => () => {
       if (speechRestartTimer.current) window.clearTimeout(speechRestartTimer.current);
+      if (seminarTranslateTimer.current) window.clearTimeout(seminarTranslateTimer.current);
     },
     [],
   );
@@ -546,7 +551,13 @@ export default function App() {
           finalTranslation: isFinal ? resultMark : marks.finalTranslation,
         }),
       };
-      setEntries((prev) => [...prev.filter((old) => old.isFinal || isFinal), entry].slice(-80));
+      setEntries((prev) => {
+        const liveEntry = [...prev].reverse().find((old) => old.mode === mode && !old.isFinal);
+        const mergedEntry = liveEntry
+          ? { ...entry, id: liveEntry.id, createdAt: liveEntry.createdAt }
+          : entry;
+        return [...prev.filter((old) => old.isFinal || old.mode !== mode), mergedEntry].slice(-80);
+      });
       if (isFinal) {
         lastConfirmedLang.current = direction.sourceLang;
         queueSuggestedTerms(text);
@@ -582,15 +593,23 @@ export default function App() {
       previousLang: lastConfirmedLang.current,
       glossaryHints: glossary,
     });
-    const firstCaption = marks.firstSourceCaption ?? now();
-    setMarks((prev) => ({ ...prev, firstSourceCaption: prev.firstSourceCaption ?? firstCaption }));
+    const captionAt = now();
+    setMarks((prev) => ({
+      ...prev,
+      micStart: prev.firstSourceCaption ? prev.micStart : captionAt,
+      firstSourceCaption: prev.firstSourceCaption ?? captionAt,
+    }));
     setSourceCaption(trimmed);
     setStatus(isFinal ? 'translating' : 'recognizing');
     if (isFinal && speechDirection.confidence >= 0.45) {
       lastConfirmedLang.current = speechDirection.sourceLang;
     }
-    const translationDelay = isFinal ? 0 : mode === 'auto' ? 80 : 420;
-    window.setTimeout(() => translateText(trimmed, isFinal), translationDelay);
+    if (mode === 'auto' && !isFinal) {
+      if (seminarTranslateTimer.current) window.clearTimeout(seminarTranslateTimer.current);
+      seminarTranslateTimer.current = window.setTimeout(() => translateText(trimmed, false), 20);
+      return;
+    }
+    window.setTimeout(() => translateText(trimmed, isFinal), isFinal ? 0 : 260);
   }
 
   function submitManualTranslation() {
@@ -1353,18 +1372,20 @@ export default function App() {
                   <span>{LANG_LABELS[fixedLang]} 입력</span>
                   <strong>{LANG_LABELS[oppositeLang(fixedLang)]} 번역</strong>
                 </div>
-                <div className="board-seminar-lines" ref={boardSeminarTranscriptRef}>
-                  {seminarEntries.length === 0 ? (
-                    <p className="seminar-placeholder board-seminar-placeholder">
-                      마이크로 말하거나 텍스트를 입력하면 원문과 번역문이 한 박스 안에 순서대로 쌓입니다.
-                    </p>
+                <div className="board-seminar-lines board-latest-window" ref={boardSeminarTranscriptRef}>
+                  {latestSeminarSource || latestSeminarTranslation ? (
+                    <section className={latestSeminarEntry?.isFinal ? 'done' : 'live'}>
+                      <p className="board-source-line">
+                        {latestSeminarSource || `${LANG_LABELS[fixedLang]} 음성을 기다리고 있습니다.`}
+                      </p>
+                      <p className="board-translation-line">
+                        {latestSeminarTranslation || `${LANG_LABELS[oppositeLang(fixedLang)]} 번역을 준비하고 있습니다.`}
+                      </p>
+                    </section>
                   ) : (
-                    seminarEntries.map((entry) => (
-                      <section key={entry.id} className={entry.isFinal ? 'done' : 'live'}>
-                        <p className="board-source-line">{entry.sourceText}</p>
-                        <p className="board-translation-line">{entry.translatedText}</p>
-                      </section>
-                    ))
+                    <p className="seminar-placeholder board-seminar-placeholder">
+                      마이크로 말하면 최신 원문과 번역문이 이 창에 표시됩니다.
+                    </p>
                   )}
                 </div>
               </article>
