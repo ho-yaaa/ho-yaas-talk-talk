@@ -289,6 +289,8 @@ export default function App() {
   const googleCredentialHandler = useRef<(response: GoogleCredentialResponse) => void>(() => undefined);
   const speakerVoiceGenderRef = useRef<VoiceGender>('neutral');
   const voiceSamplingRef = useRef(false);
+  const seminarTranscriptRef = useRef<HTMLDivElement | null>(null);
+  const boardSeminarTranscriptRef = useRef<HTMLDivElement | null>(null);
   const meetingStart = useRef(Date.now());
   const userStopped = useRef(false);
 
@@ -330,6 +332,17 @@ export default function App() {
         { lang: 'ja', className: 'target-board', pillClass: 'ja-pill', label: '🇯🇵 日本語 / JAPANESE', text: japaneseBoardText },
       ];
   const seminarEntries = entries.filter((entry) => entry.mode === 'auto').slice(-20);
+
+  useEffect(() => {
+    if (mode !== 'auto') return;
+    const scrollTargets = [seminarTranscriptRef.current, boardSeminarTranscriptRef.current];
+    requestAnimationFrame(() => {
+      scrollTargets.forEach((target) => {
+        if (!target) return;
+        target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
+      });
+    });
+  }, [mode, seminarEntries.length, sourceCaption, translationCaption]);
 
   useEffect(() => {
     getGlossary().then(setGlossary).catch(() => setGlossary(DEFAULT_GLOSSARY));
@@ -479,7 +492,12 @@ export default function App() {
   }
 
   async function translateText(text: string, isFinal: boolean) {
-    if (!shouldTranslateInterim(text, lastTranslationRequest.current) && !isFinal) return;
+    const normalizedText = text.trim();
+    const seminarFastInterim =
+      mode === 'auto' &&
+      normalizedText.length >= 2 &&
+      normalizedText !== lastTranslationRequest.current.trim();
+    if (!isFinal && !(seminarFastInterim || shouldTranslateInterim(text, lastTranslationRequest.current))) return;
     lastTranslationRequest.current = text;
     abortRef.current?.abort();
     abortRef.current = new AbortController();
@@ -571,7 +589,8 @@ export default function App() {
     if (isFinal && speechDirection.confidence >= 0.45) {
       lastConfirmedLang.current = speechDirection.sourceLang;
     }
-    window.setTimeout(() => translateText(trimmed, isFinal), isFinal ? 0 : 420);
+    const translationDelay = isFinal ? 0 : mode === 'auto' ? 80 : 420;
+    window.setTimeout(() => translateText(trimmed, isFinal), translationDelay);
   }
 
   function submitManualTranslation() {
@@ -628,7 +647,7 @@ export default function App() {
         if (!userStopped.current && (mode === 'auto' || autoDetect)) {
           speechRestartTimer.current = window.setTimeout(
             () => startListening(activeSpeechLang.current),
-            autoDetect ? 420 : 800,
+            mode === 'auto' ? 140 : autoDetect ? 420 : 800,
           );
         } else {
           setStatus((prev) => (prev === 'paused' || prev === 'mic-blocked' || prev === 'error' ? prev : 'idle'));
@@ -1334,7 +1353,7 @@ export default function App() {
                   <span>{LANG_LABELS[fixedLang]} 입력</span>
                   <strong>{LANG_LABELS[oppositeLang(fixedLang)]} 번역</strong>
                 </div>
-                <div className="board-seminar-lines">
+                <div className="board-seminar-lines" ref={boardSeminarTranscriptRef}>
                   {seminarEntries.length === 0 ? (
                     <p className="seminar-placeholder board-seminar-placeholder">
                       마이크로 말하거나 텍스트를 입력하면 원문과 번역문이 한 박스 안에 순서대로 쌓입니다.
@@ -1493,7 +1512,7 @@ export default function App() {
                   <span>{LANG_LABELS[fixedLang]} 입력</span>
                   <strong>{LANG_LABELS[oppositeLang(fixedLang)]} 번역</strong>
                 </div>
-                <div className="seminar-transcript-lines">
+                <div className="seminar-transcript-lines" ref={seminarTranscriptRef}>
                   {seminarEntries.length === 0 ? (
                     <p className="seminar-placeholder">
                       마이크로 말하거나 텍스트를 입력하면 원문과 번역문이 한 박스 안에 순서대로 쌓입니다.
